@@ -4,6 +4,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api';
 const PAYSTACK_PUBLIC_KEY = process.env.EXPO_PUBLIC_PAYSTACK_KEY || '';
 
+// Debug logging
+console.log('🔍 API Configuration Debug:');
+console.log('🔍 EXPO_PUBLIC_API_URL:', process.env.EXPO_PUBLIC_API_URL);
+console.log('🔍 API_BASE_URL:', API_BASE_URL);
+console.log('🔍 PAYSTACK_PUBLIC_KEY:', PAYSTACK_PUBLIC_KEY ? 'Set' : 'Not set');
+
 // API Response Types
 export interface ApiResponse<T = any> {
   success: boolean;
