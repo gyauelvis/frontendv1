@@ -5,8 +5,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
-  View,
+  View
 } from 'react-native';
 
 import AIInsightCard, { AIInsight } from '@/components/evault-components/ai-insight';
@@ -286,27 +285,6 @@ const MainDashboard: React.FC = () => {
       showsVerticalScrollIndicator={false}
       contentContainerStyle={styles.scrollContent}
     >
-      {/* Welcome Header */}
-      <View style={styles.welcomeHeader}>
-        <View style={styles.welcomeTextContainer}>
-          <Text style={styles.greetingText}>{getGreeting()},</Text>
-          <Text style={styles.userNameText}>{getDisplayName()}</Text>
-          <Text style={styles.subtitleText}>Welcome back to your dashboard</Text>
-        </View>
-        
-        <TouchableOpacity
-          style={styles.profileButton}
-          onPress={handleProfilePress}
-          activeOpacity={0.7}
-        >
-          <View style={styles.profileAvatar}>
-            <Text style={styles.profileInitial}>
-              {getDisplayName().charAt(0).toUpperCase()}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      </View>
-
       <BalanceCard
         balance={displayBalance}
         changePercentage="+2.5% from last month"
