@@ -1,11 +1,12 @@
 import { useFonts } from 'expo-font';
-import { Stack } from "expo-router";
+import { Slot } from "expo-router";
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect } from 'react';
+import { AuthProvider } from '../contexts/AuthContext';
+import { DataProvider } from '../contexts/DataContext';
 
 export default function RootLayout() {
-
-   const [loaded] = useFonts({
+  const [loaded] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
 
@@ -19,7 +20,11 @@ export default function RootLayout() {
     return null;
   }
 
-  return <Stack screenOptions={{ headerShown: false }}>
-    <Stack />
-  </Stack>;
+  return (
+    <AuthProvider>
+      <DataProvider>
+        <Slot />
+      </DataProvider>
+    </AuthProvider>
+  );
 }

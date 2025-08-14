@@ -12,6 +12,8 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { useAuth } from '../../contexts/AuthContext';
+import { apiClient } from '../../services/api';
 
 const { width } = Dimensions.get('window');
 
@@ -28,6 +30,38 @@ interface RecentContact {
 interface QuickAmount {
   value: number;
   label: string;
+}
+
+interface AccountLookupResult {
+  userId: string;
+  firstName: string;
+  lastName: string;
+  phoneNumber: string;
+  email: string;
+  accounts: Array<{
+    id: string;
+    accountNumber: string;
+    accountType: string;
+    currency: string;
+  }>;
+}
+
+interface TransferResponse {
+  transactionId: string;
+  reference: string;
+  amount: number;
+  currency: string;
+  senderAccount: {
+    id: string;
+    accountNumber: string;
+    newBalance: number;
+  };
+  recipientAccount: {
+    id: string;
+    accountNumber: string;
+    newBalance: number;
+  };
+  timestamp: string;
 }
 
 // Recent Contact Item Component
@@ -145,11 +179,14 @@ const SendMoneyScreen: React.FC = () => {
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
-  const [selectedQuickAmount, setSelectedQuickAmount] = useState<number | null>(null);
   const [selectedContact, setSelectedContact] = useState<RecentContact | null>(null);
+  const [selectedQuickAmount, setSelectedQuickAmount] = useState<QuickAmount | null>(null);
+  const [userAccounts, setUserAccounts] = useState<Array<{id: string, accountNumber: string, availableBalance: string, currency: string}>>([]);
+  const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [slideAnim] = useState(new Animated.Value(30));
   const [opacityAnim] = useState(new Animated.Value(0));
+  const { user } = useAuth();
 
   useEffect(() => {
     Animated.parallel([
@@ -165,6 +202,30 @@ const SendMoneyScreen: React.FC = () => {
       }),
     ]).start();
   }, []);
+
+  // Get user's accounts on component mount
+  useEffect(() => {
+    const getUserAccounts = async () => {
+      if (!user?.id) return;
+      
+      setIsLoadingAccounts(true);
+      try {
+        // Get user's accounts
+        const response = await apiClient.getUserAccounts(user.id);
+        if (response.success) {
+          setUserAccounts(response.data);
+        } else {
+          console.error('Failed to get user accounts:', response.message);
+        }
+      } catch (error) {
+        console.error('Error loading user accounts:', error);
+      } finally {
+        setIsLoadingAccounts(false);
+      }
+    };
+
+    getUserAccounts();
+  }, [user?.id]);
 
   // Sample recent contacts data
   const recentContacts: RecentContact[] = [
@@ -221,7 +282,7 @@ const SendMoneyScreen: React.FC = () => {
   };
 
   const handleQuickAmountSelect = (quickAmount: QuickAmount): void => {
-    setSelectedQuickAmount(quickAmount.value);
+    setSelectedQuickAmount(quickAmount);
     setAmount(quickAmount.value.toString());
   };
 
@@ -232,53 +293,84 @@ const SendMoneyScreen: React.FC = () => {
     setSelectedQuickAmount(null);
   };
 
-  const handleSendMoney = async (): Promise<void> => {
-    if (!recipient || !amount) {
-      Alert.alert('Error', 'Please fill in all required fields');
-      return;
-    }
-
-    if (parseFloat(amount) <= 0) {
-      Alert.alert('Error', 'Please enter a valid amount');
-      return;
-    }
+  const handleTransfer = async (): Promise<void> => {
+    if (!isFormValid || !user?.id) return;
 
     setIsLoading(true);
 
     try {
-      // Here you would integrate with Paystack
-      // For now, we'll simulate the process
-      await simulatePaystackIntegration();
-      
-      Alert.alert(
-        'Success',
-        `₦${parseFloat(amount).toLocaleString()} sent successfully to ${selectedContact?.name || recipient}`,
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              // Reset form
-              setRecipient('');
-              setAmount('');
-              setNote('');
-              setSelectedContact(null);
-              setSelectedQuickAmount(null);
-            }
+      // Get user's primary account (first account)
+      if (userAccounts.length === 0) {
+        Alert.alert('Error', 'No accounts found. Please try again.');
+        return;
+      }
+
+      const senderAccount = userAccounts[0]; // Use first account as sender
+
+      // Look up recipient by phone number or email
+      let recipientAccountId: string;
+      let recipientDetails: any;
+
+      try {
+        const lookupResponse = await apiClient.lookupAccount(recipient);
+        if (lookupResponse.success) {
+          recipientDetails = lookupResponse.data;
+          if (recipientDetails.accounts && recipientDetails.accounts.length > 0) {
+            recipientAccountId = recipientDetails.accounts[0].id;
+          } else {
+            Alert.alert('Error', 'Recipient has no accounts');
+            return;
           }
-        ]
+        } else {
+          Alert.alert('Error', 'Recipient not found');
+          return;
+        }
+      } catch (error) {
+        Alert.alert('Error', 'Failed to find recipient. Please check the phone number or email.');
+        return;
+      }
+
+      // Make the transfer
+      const transferResponse = await apiClient.transferMoney(
+        senderAccount.id,
+        recipientAccountId,
+        parseFloat(amount),
+        'USD',
+        note || `Transfer to ${recipient}`
       );
-    } catch (error) {
-      Alert.alert('Error', 'Transaction failed. Please try again.');
+
+      if (transferResponse.success) {
+        const transferData: TransferResponse = transferResponse.data;
+        
+        Alert.alert(
+          'Success! 🎉',
+          `$${parseFloat(amount).toLocaleString()} sent successfully!\n\nTransaction ID: ${transferData.transactionId}\nReference: ${transferData.reference}\nNew Balance: $${transferData.senderAccount.newBalance.toLocaleString()}`,
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                // Reset form
+                setRecipient('');
+                setAmount('');
+                setNote('');
+                setSelectedContact(null);
+                setSelectedQuickAmount(null);
+              }
+            }
+          ]
+        );
+      } else {
+        Alert.alert('Error', transferResponse.data.message || 'Transfer failed');
+      }
+    } catch (error: any) {
+      console.error('Transfer error:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Transaction failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const simulatePaystackIntegration = (): Promise<void> => {
-    return new Promise((resolve) => {
-      setTimeout(resolve, 2000); // Simulate API call
-    });
-  };
+
 
   const isFormValid = recipient && amount && parseFloat(amount) > 0;
 
@@ -331,7 +423,7 @@ const SendMoneyScreen: React.FC = () => {
             <QuickAmountButton
               key={quickAmount.value}
               amount={quickAmount}
-              isSelected={selectedQuickAmount === quickAmount.value}
+              isSelected={selectedQuickAmount?.value === quickAmount.value}
               onPress={() => handleQuickAmountSelect(quickAmount)}
               index={index}
             />
@@ -436,7 +528,7 @@ const SendMoneyScreen: React.FC = () => {
             styles.sendButton,
             !isFormValid && styles.sendButtonDisabled
           ]}
-          onPress={handleSendMoney}
+                          onPress={handleTransfer}
           disabled={!isFormValid || isLoading}
         >
           <LinearGradient

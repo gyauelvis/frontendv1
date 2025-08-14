@@ -7,11 +7,12 @@ import {
   Text,
   View
 } from 'react-native';
+import { useRouter } from 'expo-router';
 
 import AIInsightCard, { AIInsight } from '@/components/evault-components/ai-insight';
 import ChallengeCard, { Challenge } from '@/components/evault-components/challenge';
 import BalanceCard from '@/components/evault-components/e-balance';
-import ActionButtons from '@/components/evault-components/e-button';
+import CustomButton from '@/components/evault-components/e-button';
 import { Transaction } from '@/components/evault-components/e-transaction';
 import SectionHeader from '@/components/evault-components/section-header';
 import TransactionsList from '@/components/evault-components/transaction-list';
@@ -28,6 +29,7 @@ import {
 } from '@/types/types';
 
 const MainDashboard: React.FC = () => {
+  const router = useRouter();
   const [userProfile, setUserProfile] = useState<User | null>(null);
   const [primaryAccount, setPrimaryAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(true);
@@ -248,6 +250,25 @@ const MainDashboard: React.FC = () => {
 
   const handleActionButtonPress = (title: string): void => {
     console.log(`Action button pressed: ${title}`);
+    
+    switch (title) {
+      case 'Send Money':
+        router.push('/main/send');
+        break;
+      case 'Request Money':
+        router.push('/main/payment-request');
+        break;
+      case 'View Transactions':
+        // Navigate to transactions or show transactions modal
+        router.push('/main/analytics');
+        break;
+      case 'Insights':
+        // Navigate to insights or show insights modal
+        router.push('/main/analytics');
+        break;
+      default:
+        console.log(`Unknown action: ${title}`);
+    }
   };
 
   const handleSeeAllPress = (section: string) => (): void => {
@@ -292,25 +313,25 @@ const MainDashboard: React.FC = () => {
       />
 
       <View style={styles.actionButtonsContainer}>
-        <ActionButtons
+        <CustomButton
           title="Send Money"
           variant="primary"
           onPress={handleActionButtonPress}
           style={styles.actionButton}
         />
-        <ActionButtons
+        <CustomButton
           title="Request Money"
           variant="secondary"
           onPress={handleActionButtonPress}
           style={styles.actionButton}
         />
-        <ActionButtons
+        <CustomButton
           title="View Transactions"
           variant="secondary"
           onPress={handleActionButtonPress}
           style={styles.actionButton}
         />
-        <ActionButtons
+        <CustomButton
           title="Insights"
           variant="secondary"
           onPress={handleActionButtonPress}
