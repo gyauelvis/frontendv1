@@ -29,6 +29,47 @@ interface TimerState {
     seconds: number;
 }
 
+interface CustomInputProps {
+    placeholder: string;
+    value: string;
+    onChangeText: (text: string) => void;
+    secureTextEntry?: boolean;
+    keyboardType?: 'default' | 'email-address' | 'numeric' | 'phone-pad';
+    inputRef?: React.RefObject<TextInput | null>;
+    maxLength?: number;
+    autoFocus?: boolean;
+    disabled?: boolean;
+}
+
+const CustomInput: React.FC<CustomInputProps> = React.memo(({
+    placeholder,
+    value,
+    onChangeText,
+    secureTextEntry = false,
+    keyboardType = 'default',
+    inputRef,
+    maxLength,
+    autoFocus = false,
+    disabled = false
+}) => (
+    <TextInput
+        ref={inputRef}
+        style={styles.textInput}
+        placeholder={placeholder}
+        placeholderTextColor="#8C855F"
+        value={value}
+        onChangeText={onChangeText}
+        secureTextEntry={secureTextEntry}
+        keyboardType={keyboardType}
+        autoCapitalize="none"
+        maxLength={maxLength}
+        autoFocus={autoFocus}
+        returnKeyType={keyboardType === 'numeric' ? 'done' : 'next'}
+        blurOnSubmit={false}
+        editable={!disabled}
+    />
+));
+
 const LoginScreen = () => {
     const router = useRouter();
     const otpInputRef = useRef<TextInput>(null);
@@ -158,42 +199,42 @@ const LoginScreen = () => {
             // Save credentials if remember me is checked
             await saveCredentials();
 
-            // Check if user has verified email
-            if (result.user && !result.user.email_confirmed_at) {
-                Alert.alert(
-                    'Email Verification Required',
-                    'Please check your email and click the verification link before proceeding.',
-                    [{ text: 'OK' }]
-                );
-                setLoading(false);
-                return;
-            }
+            // Check if user has verified email (commented out since backend doesn't support it yet)
+            // if (result.user && !result.user.email_confirmed_at) {
+            //     Alert.alert(
+            //         'Email Verification Required',
+            //         'Please check your email and click the verification link before proceeding.',
+            //         [{ text: 'OK' }]
+            //     );
+            //     setLoading(false);
+            //     return;
+            // }
 
             // Get user profile to check if phone is verified
             if (result.user) {
                 const profileResult = await authService.getUserProfile(result.user.id);
 
                 if (profileResult.success && profileResult.data) {
-                    // Check if phone verification is needed
-                    const needsPhoneVerification = !profileResult.data.phone_verified;
+                    // Check if phone verification is needed (commented out since backend doesn't support it yet)
+                    // const needsPhoneVerification = !profileResult.data.phone_verified;
 
-                    if (needsPhoneVerification && formData.emailOrPhone.includes('@')) {
-                        // If logging in with email but phone needs verification
-                        setPendingUserId(result.user.id);
-                        setShowOTP(true);
-                        setTimer({ minutes: 0, seconds: 30 });
-                        setIsTimerActive(true);
+                    // if (needsPhoneVerification && formData.emailOrPhone.includes('@')) {
+                    //     // If logging in with email but phone needs verification
+                    //     setPendingUserId(result.user.id);
+                    //     setShowOTP(true);
+                    //     setTimer({ minutes: 0, seconds: 30 });
+                    //     setIsTimerActive(true);
 
-                        // Send OTP
-                        await authService.sendOTP(profileResult.data.phone_number);
+                    //     // Send OTP
+                    //     await authService.sendOTP(profileResult.data.phone_number);
 
-                        setTimeout(() => {
-                            otpInputRef.current?.focus();
-                        }, 100);
+                    //     setTimeout(() => {
+                    //         otpInputRef.current?.focus();
+                    //     }, 100);
 
-                        setLoading(false);
-                        return;
-                    }
+                    //     setLoading(false);
+                    //     return;
+                    // }
                 }
             }
 
@@ -354,44 +395,7 @@ const LoginScreen = () => {
         setRememberMe(prev => !prev);
     }, []);
 
-    interface CustomInputProps {
-        placeholder: string;
-        value: string;
-        onChangeText: (text: string) => void;
-        secureTextEntry?: boolean;
-        keyboardType?: 'default' | 'email-address' | 'numeric' | 'phone-pad';
-        inputRef?: React.RefObject<TextInput | null>;
-        maxLength?: number;
-        autoFocus?: boolean;
-    }
 
-    const CustomInput: React.FC<CustomInputProps> = React.memo(({
-        placeholder,
-        value,
-        onChangeText,
-        secureTextEntry = false,
-        keyboardType = 'default',
-        inputRef,
-        maxLength,
-        autoFocus = false
-    }) => (
-        <TextInput
-            ref={inputRef}
-            style={styles.textInput}
-            placeholder={placeholder}
-            placeholderTextColor="#8C855F"
-            value={value}
-            onChangeText={onChangeText}
-            secureTextEntry={secureTextEntry}
-            keyboardType={keyboardType}
-            autoCapitalize="none"
-            maxLength={maxLength}
-            autoFocus={autoFocus}
-            returnKeyType={keyboardType === 'numeric' ? 'done' : 'next'}
-            blurOnSubmit={false}
-            editable={!loading && !otpLoading}
-        />
-    ));
 
     // Memoize TimerDisplay to prevent unnecessary re-renders
     const TimerDisplay = useMemo(() => (
@@ -458,6 +462,7 @@ const LoginScreen = () => {
                             value={formData.emailOrPhone}
                             onChangeText={(value: string) => handleInputChange('emailOrPhone', value)}
                             keyboardType="email-address"
+                            disabled={loading || otpLoading}
                         />
 
                         <CustomInput
@@ -465,6 +470,7 @@ const LoginScreen = () => {
                             value={formData.password}
                             onChangeText={(value: string) => handleInputChange('password', value)}
                             secureTextEntry={true}
+                            disabled={loading || otpLoading}
                         />
 
                         {/* Remember Me and Forgot Password */}
@@ -561,6 +567,7 @@ const LoginScreen = () => {
                             inputRef={otpInputRef}
                             maxLength={6}
                             autoFocus={true}
+                            disabled={otpLoading}
                         />
 
                         {TimerDisplay}

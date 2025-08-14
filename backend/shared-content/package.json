@@ -1,0 +1,51 @@
+{
+    "name": "shared",
+    "version": "1.0.0",
+    "description": "Money Transfer App - Hackathon Project",
+    "private": true,
+    "workspaces": [
+        "backend/*",
+        "frontend"
+    ],
+    "scripts": {
+        "setup": "npm install && npm run db:generate",
+        "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+        "dev:backend": "cd backend/api-gateway && npm run dev",
+        "dev:frontend": "cd frontend && npm run dev",
+        "db:primary:migrate": "npx prisma migrate dev --schema=prisma/primary/schema.prisma",
+        "db:primary:generate": "npx prisma generate --schema=prisma/primary/schema.prisma",
+        "db:primary:studio": "npx prisma studio --schema=prisma/primary/schema.prisma",
+        "db:primary:seed": "npx prisma db seed --schema=prisma/primary/schema.prisma",
+        "db:primary:reset": "npx prisma migrate reset --schema=prisma/primary/schema.prisma",
+        "db:primary:deploy": "npx prisma migrate deploy --schema=prisma/primary/schema.prisma",
+        "db:secondary:migrate": "npx prisma migrate dev --schema=prisma/secondary/schema.prisma",
+        "db:secondary:generate": "npx prisma generate --schema=prisma/secondary/schema.prisma",
+        "db:secondary:studio": "npx prisma studio --schema=prisma/secondary/schema.prisma",
+        "db:secondary:seed": "npx prisma db seed --schema=prisma/secondary/schema.prisma",
+        "db:secondary:reset": "npx prisma migrate reset --schema=prisma/secondary/schema.prisma",
+        "db:secondary:deploy": "npx prisma migrate deploy --schema=prisma/secondary/schema.prisma",
+        "db:generate:all": "npm run db:primary:generate && npm run db:secondary:generate",
+        "db:migrate:all": "npm run db:primary:migrate && npm run db:secondary:migrate",
+        "db:deploy:all": "npm run db:primary:deploy && npm run db:secondary:deploy",
+        "install:all": "npm install && npm run install:backend && npm run install:frontend",
+        "install:backend": "cd backend/api-gateway && npm install",
+        "install:frontend": "cd frontend && npm install",
+        "build": "npm run build:frontend && npm run build:backend",
+        "build:frontend": "cd frontend && npm run build",
+        "build:backend": "cd backend/api-gateway && npm run build",
+        "test": "npm run test:backend && npm run test:frontend",
+        "test:backend": "cd backend/api-gateway && npm run test",
+        "test:frontend": "cd frontend && npm run test"
+    },
+    "devDependencies": {
+        "concurrently": "^8.2.2",
+        "prisma": "^5.7.0"
+    },
+    "dependencies": {
+        "@prisma/client": "^5.7.0"
+    },
+    "prisma": {
+        "schema": "shared/prisma/schema.prisma",
+        "seed": "node shared/prisma/seed.js"
+    }
+}

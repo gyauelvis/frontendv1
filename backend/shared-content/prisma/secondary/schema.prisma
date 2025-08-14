@@ -1,0 +1,337 @@
+generator client {
+    provider = "prisma-client-js"
+    output   = "../node_modules/.prisma/secondary/client"
+}
+
+datasource secondaryDB {
+    provider  = "postgresql"
+    url       = env("DATABASE_URL")
+    directUrl = env("DIRECT_URL")
+}
+
+model User {
+    id            String    @id @unique @default(uuid()) @secondaryDB.Uuid
+    email         String    @unique
+    passwordHash  String    @map("password_hash")
+    phoneNumber   String    @unique @map("phone_number")
+    firstName     String    @map("first_name")
+    lastName      String    @map("last_name")
+    dateOfBirth   DateTime? @map("date_of_birth") @secondaryDB.Date
+    kycStatus     KycStatus @default(PENDING) @map("kyc_status")
+    kycVerifiedAt DateTime? @map("kyc_verified_at")
+    isActive      Boolean   @default(true) @map("is_active")
+    createdAt     DateTime  @default(now()) @map("created_at")
+    updatedAt     DateTime  @updatedAt @map("updated_at")
+
+    // Relations
+    accounts             Account[]
+    sentTransactions     Transaction[]      @relation("SenderTransactions")
+    receivedTransactions Transaction[]      @relation("RecipientTransactions")
+    contacts             Contact[]          @relation("UserContacts")
+    contactOf            Contact[]          @relation("ContactUser")
+    mfaSettings          UserMfa[]
+    biometricAuth        UserBiometric[]
+    sessions             UserSession[]
+    notifications        Notification[]
+    riskScore            UserRiskScore?
+    fraudEvents          FraudEvent[]
+    monthlyAnalytics     MonthlyAnalytics[]
+    auditLogs            AuditLog[]
+
+    @@map("users")
+}
+
+model UserMfa {
+    id          String    @id @unique @default(uuid()) @secondaryDB.Uuid
+    userId      String    @map("user_id") @secondaryDB.Uuid
+    method      MfaMethod
+    secret      String?
+    isEnabled   Boolean   @default(false) @map("is_enabled")
+    backupCodes String[]  @map("backup_codes")
+    createdAt   DateTime  @default(now()) @map("created_at")
+    updatedAt   DateTime  @updatedAt @map("updated_at")
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([userId, method])
+    @@map("user_mfa")
+}
+
+model UserBiometric {
+    id           String    @id @unique @default(uuid()) @secondaryDB.Uuid
+    userId       String    @map("user_id") @secondaryDB.Uuid
+    credentialId String    @unique @map("credential_id")
+    publicKey    String    @map("public_key")
+    counter      BigInt    @default(0)
+    deviceName   String?   @map("device_name")
+    createdAt    DateTime  @default(now()) @map("created_at")
+    lastUsedAt   DateTime? @map("last_used_at")
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("user_biometric")
+}
+
+model UserSession {
+    id                String   @id @unique @default(uuid()) @secondaryDB.Uuid
+    userId            String   @map("user_id") @secondaryDB.Uuid
+    deviceFingerprint String?  @map("device_fingerprint")
+    refreshTokenHash  String?  @map("refresh_token_hash")
+    ipAddress         String?  @map("ip_address")
+    userAgent         String?  @map("user_agent")
+    isTrusted         Boolean  @default(false) @map("is_trusted")
+    createdAt         DateTime @default(now()) @map("created_at")
+    expiresAt         DateTime @map("expires_at")
+    lastActivity      DateTime @default(now()) @map("last_activity")
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("user_sessions")
+}
+
+model Account {
+    id               String        @id @unique @default(uuid()) @secondaryDB.Uuid
+    userId           String        @map("user_id") @secondaryDB.Uuid
+    accountNumber    String        @unique @map("account_number")
+    balance          Decimal       @default(0.00) @secondaryDB.Decimal(15, 2)
+    availableBalance Decimal       @default(0.00) @map("available_balance") @secondaryDB.Decimal(15, 2)
+    currency         String        @default("USD")
+    accountType      AccountType   @default(PERSONAL) @map("account_type")
+    status           AccountStatus @default(ACTIVE)
+    createdAt        DateTime      @default(now()) @map("created_at")
+    updatedAt        DateTime      @updatedAt @map("updated_at")
+
+    user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+    sentTransactions     Transaction[]     @relation("SenderAccount")
+    receivedTransactions Transaction[]     @relation("RecipientAccount")
+    balanceHistory       BalanceHistory[]
+    fundReservations     FundReservation[]
+
+    @@map("accounts")
+}
+
+model Transaction {
+    id                 String              @id @unique @default(uuid()) @secondaryDB.Uuid
+    idempotencyKey     String              @unique @map("idempotency_key")
+    senderAccountId    String              @map("sender_account_id") @secondaryDB.Uuid
+    recipientAccountId String              @map("recipient_account_id") @secondaryDB.Uuid
+    amount             Decimal             @secondaryDB.Decimal(15, 2)
+    currency           String              @default("USD")
+    category           TransactionCategory
+    description        String?
+    status             TransactionStatus   @default(PENDING)
+    reference          String              @unique
+    metadata           Json?
+    createdAt          DateTime            @default(now()) @map("created_at")
+    updatedAt          DateTime            @updatedAt @map("updated_at")
+    completedAt        DateTime?           @map("completed_at")
+
+    senderAccount    Account @relation("SenderAccount", fields: [senderAccountId], references: [id], map: "transactions_sender_account_fkey")
+    recipientAccount Account @relation("RecipientAccount", fields: [recipientAccountId], references: [id], map: "transactions_recipient_account_fkey")
+    sender           User    @relation("SenderTransactions", fields: [senderAccountId], references: [id], map: "transactions_sender_user_fkey")
+    recipient        User    @relation("RecipientTransactions", fields: [recipientAccountId], references: [id], map: "transactions_recipient_user_fkey")
+
+    statusHistory    TransactionStatusHistory[]
+    fundReservations FundReservation[]
+    fraudEvents      FraudEvent[]
+
+    @@map("transactions")
+}
+
+enum KycStatus {
+    PENDING
+    VERIFIED
+    REJECTED
+}
+
+enum AccountType {
+    PERSONAL
+    BUSINESS
+}
+
+enum AccountStatus {
+    ACTIVE
+    SUSPENDED
+    CLOSED
+}
+
+enum TransactionStatus {
+    PENDING
+    PROCESSING
+    COMPLETED
+    FAILED
+    CANCELLED
+    REFUNDED
+}
+
+enum TransactionCategory {
+    FOOD
+    SHOPPING
+    TRANSPORT
+    ENTERTAINMENT
+    UTILITIES
+    HEALTHCARE
+    EDUCATION
+    SAVINGS
+    OTHER
+}
+
+enum MfaMethod {
+    TOTP
+    SMS
+    EMAIL
+}
+
+enum NotificationType {
+    PAYMENT_SUCCESS
+    PAYMENT_FAILED
+    BALANCE_LOW
+    SECURITY_ALERT
+    MFA_CODE
+    ANALYTICS_READY
+}
+
+model Contact {
+    id                String    @id @default(uuid()) @secondaryDB.Uuid
+    userId            String    @map("user_id") @secondaryDB.Uuid
+    contactUserId     String    @map("contact_user_id") @secondaryDB.Uuid
+    nickname          String?
+    isFavorite        Boolean   @default(false) @map("is_favorite")
+    transactionCount  Int       @default(0) @map("transaction_count")
+    totalSent         Decimal   @default(0.00) @map("total_sent") @secondaryDB.Decimal(15, 2)
+    lastTransactionAt DateTime? @map("last_transaction_at")
+    createdAt         DateTime  @default(now()) @map("created_at")
+    updatedAt         DateTime  @updatedAt @map("updated_at")
+
+    user        User @relation("UserContacts", fields: [userId], references: [id], onDelete: Cascade)
+    contactUser User @relation("ContactUser", fields: [contactUserId], references: [id], onDelete: Cascade)
+
+    @@unique([userId, contactUserId])
+    @@map("contacts")
+}
+
+model MonthlyAnalytics {
+    id               String   @id @default(uuid()) @secondaryDB.Uuid
+    userId           String   @map("user_id") @secondaryDB.Uuid
+    month            Int
+    year             Int
+    totalSpent       Decimal  @default(0.00) @map("total_spent") @secondaryDB.Decimal(15, 2)
+    totalReceived    Decimal  @default(0.00) @map("total_received") @secondaryDB.Decimal(15, 2)
+    transactionCount Int      @default(0) @map("transaction_count")
+    topRecipients    Json?    @map("top_recipients")
+    topCategories    Json?    @map("top_categories")
+    generatedAt      DateTime @default(now()) @map("generated_at")
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@unique([userId, month, year])
+    @@map("monthly_analytics")
+}
+
+model Notification {
+    id        String           @id @default(uuid()) @secondaryDB.Uuid
+    userId    String           @map("user_id") @secondaryDB.Uuid
+    type      NotificationType
+    title     String
+    message   String
+    metadata  Json?
+    isRead    Boolean          @default(false) @map("is_read")
+    isSent    Boolean          @default(false) @map("is_sent")
+    sentAt    DateTime?        @map("sent_at")
+    createdAt DateTime         @default(now()) @map("created_at")
+    readAt    DateTime?        @map("read_at")
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("notifications")
+}
+
+model BalanceHistory {
+    id              String   @id @default(uuid()) @secondaryDB.Uuid
+    accountId       String   @map("account_id") @secondaryDB.Uuid
+    previousBalance Decimal  @map("previous_balance") @secondaryDB.Decimal(15, 2)
+    newBalance      Decimal  @map("new_balance") @secondaryDB.Decimal(15, 2)
+    changeAmount    Decimal  @map("change_amount") @secondaryDB.Decimal(15, 2)
+    reason          String
+    referenceId     String?  @map("reference_id") @secondaryDB.Uuid
+    createdAt       DateTime @default(now()) @map("created_at")
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@map("balance_history")
+}
+
+model FundReservation {
+    id            String    @id @default(uuid()) @secondaryDB.Uuid
+    accountId     String    @map("account_id") @secondaryDB.Uuid
+    transactionId String    @map("transaction_id") @secondaryDB.Uuid
+    amount        Decimal   @secondaryDB.Decimal(15, 2)
+    reservedAt    DateTime  @default(now()) @map("reserved_at")
+    expiresAt     DateTime  @map("expires_at")
+    isReleased    Boolean   @default(false) @map("is_released")
+    releasedAt    DateTime? @map("released_at")
+
+    account     Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+    @@map("fund_reservations")
+}
+
+model TransactionStatusHistory {
+    id             String             @id @default(uuid()) @secondaryDB.Uuid
+    transactionId  String             @map("transaction_id") @secondaryDB.Uuid
+    previousStatus TransactionStatus? @map("previous_status")
+    newStatus      TransactionStatus  @map("new_status")
+    reason         String?
+    createdAt      DateTime           @default(now()) @map("created_at")
+
+    transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+    @@map("transaction_status_history")
+}
+
+model UserRiskScore {
+    id           String   @id @default(uuid()) @secondaryDB.Uuid
+    userId       String   @unique @map("user_id") @secondaryDB.Uuid
+    currentScore Int      @default(0) @map("current_score")
+    lastUpdated  DateTime @default(now()) @map("last_updated")
+    flags        Json?
+    createdAt    DateTime @default(now()) @map("created_at")
+
+    user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@map("user_risk_scores")
+}
+
+model FraudEvent {
+    id            String   @id @default(uuid()) @secondaryDB.Uuid
+    userId        String   @map("user_id") @secondaryDB.Uuid
+    transactionId String?  @map("transaction_id") @secondaryDB.Uuid
+    eventType     String   @map("event_type")
+    riskScore     Int      @map("risk_score")
+    details       Json?
+    actionTaken   String?  @map("action_taken")
+    createdAt     DateTime @default(now()) @map("created_at")
+
+    user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+    transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+    @@map("fraud_events")
+}
+
+model AuditLog {
+    id           String   @id @default(uuid()) @secondaryDB.Uuid
+    userId       String?  @map("user_id") @secondaryDB.Uuid
+    action       String
+    resourceType String   @map("resource_type")
+    resourceId   String?  @map("resource_id") @secondaryDB.Uuid
+    oldValues    Json?    @map("old_values")
+    newValues    Json?    @map("new_values")
+    ipAddress    String?  @map("ip_address")
+    userAgent    String?  @map("user_agent")
+    createdAt    DateTime @default(now()) @map("created_at")
+
+    user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+    @@map("audit_logs")
+}

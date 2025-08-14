@@ -1,0 +1,307 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("PRIMARY_DATABASE_URL")
+  directUrl = env("PRIMARY_DATABASE_URL")
+}
+
+model accounts {
+  id                                                       String              @id @unique @default(uuid()) @db.Uuid
+  user_id                                                  String              @db.Uuid
+  account_number                                           String              @unique
+  balance                                                  Decimal             @default(0.00) @db.Decimal(15, 2)
+  available_balance                                        Decimal             @default(0.00) @db.Decimal(15, 2)
+  currency                                                 String              @default("USD")
+  account_type                                             AccountType         @default(PERSONAL)
+  status                                                   AccountStatus       @default(ACTIVE)
+  created_at                                               DateTime            @default(now())
+  updated_at                                               DateTime
+  users                                                    users               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  balance_history                                          balance_history[]
+  fund_reservations                                        fund_reservations[]
+  transactions_transactions_recipient_account_idToaccounts transactions[]      @relation("transactions_recipient_account_idToaccounts")
+  transactions_transactions_sender_account_idToaccounts    transactions[]      @relation("transactions_sender_account_idToaccounts")
+}
+
+model audit_logs {
+  id            String   @id @db.Uuid
+  user_id       String?  @db.Uuid
+  action        String
+  resource_type String
+  resource_id   String?  @db.Uuid
+  old_values    Json?
+  new_values    Json?
+  ip_address    String?
+  user_agent    String?
+  created_at    DateTime @default(now())
+  users         users?   @relation(fields: [user_id], references: [id])
+}
+
+model balance_history {
+  id               String   @id @db.Uuid
+  account_id       String   @db.Uuid
+  previous_balance Decimal  @db.Decimal(15, 2)
+  new_balance      Decimal  @db.Decimal(15, 2)
+  change_amount    Decimal  @db.Decimal(15, 2)
+  reason           String
+  reference_id     String?  @db.Uuid
+  created_at       DateTime @default(now())
+  accounts         accounts @relation(fields: [account_id], references: [id], onDelete: Cascade)
+}
+
+model contacts {
+  id                                    String    @id @db.Uuid
+  user_id                               String    @db.Uuid
+  contact_user_id                       String    @db.Uuid
+  nickname                              String?
+  is_favorite                           Boolean   @default(false)
+  transaction_count                     Int       @default(0)
+  total_sent                            Decimal   @default(0.00) @db.Decimal(15, 2)
+  last_transaction_at                   DateTime?
+  created_at                            DateTime  @default(now())
+  updated_at                            DateTime
+  users_contacts_contact_user_idTousers users     @relation("contacts_contact_user_idTousers", fields: [contact_user_id], references: [id], onDelete: Cascade)
+  users_contacts_user_idTousers         users     @relation("contacts_user_idTousers", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, contact_user_id])
+}
+
+model fraud_events {
+  id             String        @id @db.Uuid
+  user_id        String        @db.Uuid
+  transaction_id String?       @db.Uuid
+  event_type     String
+  risk_score     Int
+  details        Json?
+  action_taken   String?
+  created_at     DateTime      @default(now())
+  transactions   transactions? @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+  users          users         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model fund_reservations {
+  id             String       @id @db.Uuid
+  account_id     String       @db.Uuid
+  transaction_id String       @db.Uuid
+  amount         Decimal      @db.Decimal(15, 2)
+  reserved_at    DateTime     @default(now())
+  expires_at     DateTime
+  is_released    Boolean      @default(false)
+  released_at    DateTime?
+  accounts       accounts     @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  transactions   transactions @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+}
+
+model monthly_analytics {
+  id                String   @id @db.Uuid
+  user_id           String   @db.Uuid
+  month             Int
+  year              Int
+  total_spent       Decimal  @default(0.00) @db.Decimal(15, 2)
+  total_received    Decimal  @default(0.00) @db.Decimal(15, 2)
+  transaction_count Int      @default(0)
+  top_recipients    Json?
+  top_categories    Json?
+  generated_at      DateTime @default(now())
+  users             users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, month, year])
+}
+
+model notifications {
+  id           String           @id @unique @default(uuid()) @db.Uuid
+  user_id      String           @db.Uuid
+  type         NotificationType
+  title        String
+  message      String
+  is_read      Boolean          @default(false)
+  is_sent      Boolean          @default(false)
+  sent_at      DateTime?
+  created_at   DateTime         @default(now())
+  read_at      DateTime?
+  users        users            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model payment_requests {
+  id                    String    @id @unique @default(uuid()) @db.Uuid
+  requester_id          String    @db.Uuid
+  payer_id              String    @db.Uuid
+  amount                Decimal   @db.Decimal(15, 2)
+  currency              String    @default("USD")
+  description           String?
+  status                String    @default("pending")
+  qr_code_url           String?
+  paystack_payment_url  String?
+  paystack_reference    String?
+  paystack_amount       Int?
+  created_at            DateTime  @default(now())
+  expires_at            DateTime
+  paid_at               DateTime?
+  users_requester       users     @relation("payment_requests_requester", fields: [requester_id], references: [id], onDelete: Cascade)
+  users_payer           users     @relation("payment_requests_payer", fields: [payer_id], references: [id], onDelete: Cascade)
+}
+
+model transaction_status_history {
+  id              String             @id @db.Uuid
+  transaction_id  String             @db.Uuid
+  previous_status TransactionStatus?
+  new_status      TransactionStatus
+  reason          String?
+  created_at      DateTime           @default(now())
+  transactions    transactions       @relation(fields: [transaction_id], references: [id], onDelete: Cascade)
+}
+
+model transactions {
+  id                                                   String                       @id @unique @default(uuid()) @db.Uuid
+  idempotency_key                                      String                       @unique
+  sender_account_id                                    String                       @db.Uuid
+  recipient_account_id                                 String                       @db.Uuid
+  amount                                               Decimal                      @db.Decimal(15, 2)
+  currency                                             String                       @default("USD")
+  category                                             TransactionCategory
+  description                                          String?
+  status                                               TransactionStatus            @default(PENDING)
+  reference                                            String                       @unique
+  metadata                                             Json?
+  created_at                                           DateTime                     @default(now())
+  updated_at                                           DateTime
+  completed_at                                         DateTime?
+  fraud_events                                         fraud_events[]
+  fund_reservations                                    fund_reservations[]
+  transaction_status_history                           transaction_status_history[]
+  accounts_transactions_recipient_account_idToaccounts accounts                     @relation("transactions_recipient_account_idToaccounts", fields: [recipient_account_id], references: [id], map: "transactions_recipient_account_fkey")
+  accounts_transactions_sender_account_idToaccounts    accounts                     @relation("transactions_sender_account_idToaccounts", fields: [sender_account_id], references: [id], map: "transactions_sender_account_fkey")
+}
+
+model user_biometric {
+  id            String    @id @unique @db.Uuid
+  user_id       String    @db.Uuid
+  credential_id String    @unique
+  public_key    String
+  counter       BigInt    @default(0)
+  device_name   String?
+  created_at    DateTime  @default(now())
+  last_used_at  DateTime?
+  users         users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model user_mfa {
+  id           String    @id @unique @db.Uuid
+  user_id      String    @db.Uuid
+  method       MfaMethod
+  secret       String?
+  is_enabled   Boolean   @default(false)
+  backup_codes String[]
+  created_at   DateTime  @default(now())
+  updated_at   DateTime
+  users        users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, method])
+}
+
+model user_risk_scores {
+  id            String   @id @db.Uuid
+  user_id       String   @unique @db.Uuid
+  current_score Int      @default(0)
+  last_updated  DateTime @default(now())
+  flags         Json?
+  created_at    DateTime @default(now())
+  users         users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model user_sessions {
+  id                 String   @id @unique @db.Uuid
+  user_id            String   @db.Uuid
+  device_fingerprint String?
+  refresh_token_hash String?
+  ip_address         String?
+  user_agent         String?
+  is_trusted         Boolean  @default(false)
+  created_at         DateTime @default(now())
+  expires_at         DateTime
+  last_activity      DateTime @default(now())
+  users              users    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model users {
+  id                                                    String              @id @unique @default(uuid()) @db.Uuid
+  email                                                 String              @unique
+  phone_number                                          String              @unique
+  first_name                                            String
+  last_name                                             String
+  date_of_birth                                         DateTime?           @db.Date
+  kyc_status                                            KycStatus           @default(PENDING)
+  kyc_verified_at                                       DateTime?
+  is_active                                             Boolean             @default(true)
+  created_at                                            DateTime            @default(now())
+  updated_at                                            DateTime
+  accounts                                              accounts[]
+  audit_logs                                            audit_logs[]
+  contacts_contacts_contact_user_idTousers              contacts[]          @relation("contacts_contact_user_idTousers")
+  contacts_contacts_user_idTousers                      contacts[]          @relation("contacts_user_idTousers")
+  fraud_events                                          fraud_events[]
+  monthly_analytics                                     monthly_analytics[]
+  notifications                                         notifications[]
+  payment_requests_requester                            payment_requests[]  @relation("payment_requests_requester")
+  payment_requests_payer                                payment_requests[]  @relation("payment_requests_payer")
+  user_biometric                                        user_biometric[]
+  user_mfa                                              user_mfa[]
+  user_risk_scores                                      user_risk_scores?
+  user_sessions                                         user_sessions[]
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum AccountType {
+  PERSONAL
+  BUSINESS
+}
+
+enum KycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum MfaMethod {
+  TOTP
+  SMS
+  EMAIL
+}
+
+enum NotificationType {
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  BALANCE_LOW
+  SECURITY_ALERT
+  MFA_CODE
+  ANALYTICS_READY
+}
+
+enum TransactionCategory {
+  FOOD
+  SHOPPING
+  TRANSPORT
+  ENTERTAINMENT
+  UTILITIES
+  HEALTHCARE
+  EDUCATION
+  SAVINGS
+  OTHER
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+}

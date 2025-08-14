@@ -1,7 +1,7 @@
 
 import BottomNavigation, { NavigationItem } from '@/components/evault-components/bottom-nav';
 import AppHeader from '@/components/evault-components/e-header';
-import { authService } from '@/lib/auth';
+import { useAuth } from '../../contexts/AuthContext';
 import { Slot, usePathname, useRouter } from 'expo-router';
 import React, { useEffect } from 'react';
 import {
@@ -22,6 +22,7 @@ interface UserProfile {
 const RootLayout: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
+  const { user } = useAuth();
   const [userProfile, setUserProfile] = React.useState<UserProfile | null>(null);
 
   const navigationItems: NavigationItem[] = [
@@ -86,31 +87,16 @@ const RootLayout: React.FC = () => {
   };
 
   useEffect(() => {
-    const loadUserProfile = async () => {
-      try {
-        const { user } = await authService.getCurrentUser();
-
-        if (user) {
-          const profileResult = await authService.getUserProfile(user.id);
-
-          if (profileResult.success && profileResult.data) {
-            setUserProfile(profileResult.data);
-          } else {
-            setUserProfile({
-              id: user.id,
-              email: user.email || '',
-              full_name: user.user_metadata?.full_name,
-              first_name: user.user_metadata?.first_name,
-              last_name: user.user_metadata?.last_name,
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Error loading user profile:', error);
-      }
-    };
-    loadUserProfile();
-  }, []);
+    if (user) {
+      setUserProfile({
+        id: user.id,
+        email: user.email || '',
+        full_name: `${user.firstName} ${user.lastName}`,
+        first_name: user.firstName,
+        last_name: user.lastName,
+      });
+    }
+  }, [user]);
 
   const getNotificationBadgeStatus = (): boolean => {
     return true;

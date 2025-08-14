@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { KycStatus, UserBase } from '@/types/types';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { decode } from 'base64-arraybuffer';
 import * as FileSystem from 'expo-file-system';
 
@@ -109,45 +110,35 @@ class AuthService {
     // Sign in user
     async signInUser(emailOrPhone: string, password: string): Promise<{ success: boolean; error?: string; user?: any }> {
         try {
-            // Determine if input is email or phone
-            const isEmail = emailOrPhone.includes('@');
-
-            let email = emailOrPhone;
-
-            // If it's a phone number, get the email from your users table
-            if (!isEmail) {
-                const { data: userData, error: userError } = await supabase
-                    .from('users')
-                    .select('email')
-                    .eq('phone_number', emailOrPhone)
-                    .single();
-
-                if (userError || !userData) {
-                    return { success: false, error: 'User not found' };
-                }
-
-                email = userData.email;
-            }
-
-            const { data, error } = await supabase.auth.signInWithPassword({
-                email: email,
-                password: password,
+            // Call backend login endpoint
+            const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'}/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    email: emailOrPhone,
+                    password: password
+                })
             });
 
-            if (error) {
-                return { success: false, error: error.message };
+            const data = await response.json();
+
+            if (!response.ok) {
+                return { success: false, error: data.message || 'Login failed' };
             }
 
-            // Update last login time
-            if (data.user) {
-                await supabase
-                    .from('users')
-                    .update({ updated_at: new Date().toISOString() })
-                    .eq('id', data.user.id);
+            if (data.success && data.data) {
+                // Store the token
+                await AsyncStorage.setItem('authToken', data.data.token);
+                await AsyncStorage.setItem('userId', data.data.user.id);
+                
+                return { success: true, user: data.data.user };
+            } else {
+                return { success: false, error: data.message || 'Login failed' };
             }
-
-            return { success: true, user: data.user };
         } catch (error) {
+            console.error('Login error:', error);
             return { success: false, error: (error as Error).message };
         }
     }
@@ -281,26 +272,31 @@ class AuthService {
         }
     }
 
-    // Get user profile data
+    // Get user profile from backend
     async getUserProfile(userId: string): Promise<{ success: boolean; data?: any; error?: string }> {
         try {
-            const { data, error } = await supabase
-                .from('users')
-                .select(`
-          *,
-          accounts(*),
-          user_biometric(*),
-          user_mfa(*)
-        `)
-                .eq('id', userId)
-                .single();
-
-            if (error) {
-                return { success: false, error: error.message };
+            const token = await AsyncStorage.getItem('authToken');
+            
+            if (!token) {
+                return { success: false, error: 'No authentication token' };
             }
 
-            return { success: true, data };
+            const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'}/auth/profile?userId=${userId}`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            const data = await response.json();
+
+            if (response.ok && data.success) {
+                return { success: true, data: data.data };
+            } else {
+                return { success: false, error: data.message || 'Failed to get user profile' };
+            }
         } catch (error) {
+            console.error('Error getting user profile:', error);
             return { success: false, error: (error as Error).message };
         }
     }
@@ -329,23 +325,53 @@ class AuthService {
     // Sign out user
     async signOut(): Promise<{ success: boolean; error?: string }> {
         try {
-            const { error } = await supabase.auth.signOut();
-
-            if (error) {
-                return { success: false, error: error.message };
-            }
-
+            // Clear local storage
+            await AsyncStorage.removeItem('authToken');
+            await AsyncStorage.removeItem('userId');
+            await AsyncStorage.removeItem('userProfile');
+            
             return { success: true };
         } catch (error) {
+            console.error('Error signing out:', error);
             return { success: false, error: (error as Error).message };
         }
     }
 
-    // Check if user session is valid
+    // Get current user from stored token
     async getCurrentUser(): Promise<{ user: any | null; session: any | null }> {
-        const { data: { user } } = await supabase.auth.getUser();
-        const { data: { session } } = await supabase.auth.getSession();
-        return { user, session };
+        try {
+            const token = await AsyncStorage.getItem('authToken');
+            const userId = await AsyncStorage.getItem('userId');
+            
+            if (!token || !userId) {
+                return { user: null, session: null };
+            }
+
+            // Verify token with backend
+            const response = await fetch(`${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api'}/auth/refresh`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ token })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success && data.data) {
+                    return { user: data.data.user, session: { access_token: token } };
+                }
+            }
+
+            // If token is invalid, clear storage
+            await AsyncStorage.removeItem('authToken');
+            await AsyncStorage.removeItem('userId');
+            return { user: null, session: null };
+        } catch (error) {
+            console.error('Error getting current user:', error);
+            return { user: null, session: null };
+        }
     }
 
     // Send OTP for verification
