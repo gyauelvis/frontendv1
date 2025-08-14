@@ -1,6 +1,8 @@
 import SectionHeader from '@/components/evault-components/section-header';
+import { authService } from '@/lib/auth';
 import { Ionicons } from '@expo/vector-icons';
 import * as LocalAuthentication from 'expo-local-authentication';
+import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -22,13 +24,20 @@ interface UserProfile {
   name: string;
   email: string;
   phone: string;
-  avatar: string;
+  avatar?: string;
   isVerified: boolean;
   memberSince: string;
   accountType: 'Basic' | 'Premium' | 'Business';
   totalTransactions: number;
   totalVolume: number;
   currency: string;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  phone_number?: string;
+  phone_verified?: boolean;
+  email_confirmed_at?: string;
+  created_at?: string;
 }
 
 interface SecuritySettings {
@@ -39,19 +48,10 @@ interface SecuritySettings {
 }
 
 const ProfilePage: React.FC = () => {
-  const [user, setUser] = useState<UserProfile>({
-    id: 'usr_123456789',
-    name: 'Elvis Kwame',
-    email: 'elvis.kwame@example.com',
-    phone: '+233 24 123 4567',
-    avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face',
-    isVerified: true,
-    memberSince: '2023-01-15',
-    accountType: 'Premium',
-    totalTransactions: 156,
-    totalVolume: 125000,
-    currency: 'GHS',
-  });
+  const router = useRouter();
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
 
   const [securitySettings, setSecuritySettings] = useState<SecuritySettings>({
     biometricEnabled: true,
@@ -61,20 +61,97 @@ const ProfilePage: React.FC = () => {
   });
 
   const [editModalVisible, setEditModalVisible] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [editForm, setEditForm] = useState({
     name: '',
     phone: '',
   });
 
+  // Load user profile on component mount
   useEffect(() => {
-    setEditForm({
-      name: user.name,
-      phone: user.phone,
-    });
-  }, [user]);
+    loadUserProfile();
+  }, []);
+
+  const loadUserProfile = async () => {
+    try {
+      setLoading(true);
+      
+      // Get current authenticated user
+      const { user: authUser } = await authService.getCurrentUser();
+      
+      if (!authUser) {
+        Alert.alert('Error', 'No authenticated user found', [
+          { text: 'OK', onPress: () => router.replace('/auth/login' as never) }
+        ]);
+        return;
+      }
+
+      // Get detailed user profile
+      const profileResult = await authService.getUserProfile(authUser.id);
+      
+      let profileData: UserProfile;
+
+      if (profileResult.success && profileResult.data) {
+        // Use profile data from database
+        const data = profileResult.data;
+        profileData = {
+          id: authUser.id,
+          name: data.full_name || data.first_name || authUser.email?.split('@')[0] || 'User',
+          email: authUser.email || '',
+          phone: data.phone_number || '',
+          isVerified: !!authUser.email_confirmed_at && !!data.phone_verified,
+          memberSince: authUser.created_at || new Date().toISOString(),
+          accountType: 'Basic', // You can determine this based on your business logic
+          totalTransactions: 0, // These would come from your transaction data
+          totalVolume: 0,
+          currency: 'GHS',
+          // Include all the original fields for potential use
+          full_name: data.full_name,
+          first_name: data.first_name,
+          last_name: data.last_name,
+          phone_number: data.phone_number,
+          phone_verified: data.phone_verified,
+          email_confirmed_at: authUser.email_confirmed_at,
+          created_at: authUser.created_at,
+        };
+      } else {
+        // Fallback to basic auth user data
+        profileData = {
+          id: authUser.id,
+          name: authUser.user_metadata?.full_name || 
+                authUser.user_metadata?.first_name || 
+                authUser.email?.split('@')[0] || 'User',
+          email: authUser.email || '',
+          phone: authUser.user_metadata?.phone || authUser.phone || '',
+          isVerified: !!authUser.email_confirmed_at,
+          memberSince: authUser.created_at || new Date().toISOString(),
+          accountType: 'Basic',
+          totalTransactions: 0,
+          totalVolume: 0,
+          currency: 'GHS',
+          created_at: authUser.created_at,
+          email_confirmed_at: authUser.email_confirmed_at,
+        };
+      }
+
+      setUser(profileData);
+      
+      // Initialize edit form
+      setEditForm({
+        name: profileData.name,
+        phone: profileData.phone,
+      });
+
+    } catch (error) {
+      console.error('Error loading user profile:', error);
+      Alert.alert('Error', 'Failed to load profile data');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const formatCurrency = (amount: number): string => {
+    if (!user) return '₵0.00';
+    
     return new Intl.NumberFormat('en-GH', {
       style: 'currency',
       currency: user.currency,
@@ -99,8 +176,14 @@ const ProfilePage: React.FC = () => {
         { 
           text: 'Logout', 
           style: 'destructive',
-          onPress: () => {
-            console.log('User logged out');
+          onPress: async () => {
+            try {
+              await authService.signOut();
+              router.replace('/auth/login' as never);
+            } catch (error) {
+              console.error('Logout error:', error);
+              Alert.alert('Error', 'Failed to logout. Please try again.');
+            }
           }
         }
       ]
@@ -117,7 +200,9 @@ const ProfilePage: React.FC = () => {
           text: 'Delete', 
           style: 'destructive',
           onPress: () => {
+            // TODO: Implement account deletion
             console.log('Account deletion requested');
+            Alert.alert('Coming Soon', 'Account deletion will be available soon.');
           }
         }
       ]
@@ -156,36 +241,99 @@ const ProfilePage: React.FC = () => {
       return;
     }
 
-    if (!editForm.phone.trim()) {
-      Alert.alert('Error', 'Phone number cannot be empty');
+    if (!user) {
+      Alert.alert('Error', 'User data not available');
       return;
     }
 
     try {
-      setLoading(true);
+      setUpdating(true);
       
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      setUser(prev => ({
-        ...prev,
-        name: editForm.name,
-        phone: editForm.phone,
-      }));
+      // Update user profile in the database
+      const updateData = {
+        full_name: editForm.name.trim(),
+        phone_number: editForm.phone.trim(),
+        // You might also want to split the name into first_name and last_name
+        first_name: editForm.name.trim().split(' ')[0],
+        last_name: editForm.name.trim().split(' ').slice(1).join(' ') || null,
+      };
 
-      setEditModalVisible(false);
-      Alert.alert('Success', 'Profile updated successfully!');
+      const result = await authService.updateUserProfile(user.id, updateData);
+      
+      if (result.success) {
+        // Update local state
+        setUser(prev => prev ? {
+          ...prev,
+          name: editForm.name.trim(),
+          phone: editForm.phone.trim(),
+          full_name: editForm.name.trim(),
+          phone_number: editForm.phone.trim(),
+        } : null);
+
+        setEditModalVisible(false);
+        Alert.alert('Success', 'Profile updated successfully!');
+      } else {
+        Alert.alert('Error', result.error || 'Failed to update profile');
+      }
     } catch (error) {
+      console.error('Profile update error:', error);
       Alert.alert('Error', 'Failed to update profile. Please try again.');
     } finally {
-      setLoading(false);
+      setUpdating(false);
     }
   };
+
+  const getInitials = (): string => {
+    if (!user) return 'U';
+    
+    const name = user.name || user.email || 'User';
+    const parts = name.split(' ');
+    
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    }
+    
+    return name.charAt(0).toUpperCase();
+  };
+
+  const getDisplayName = (): string => {
+    if (!user) return 'User';
+    return user.name || user.email?.split('@')[0] || 'User';
+  };
+
+  // Show loading state
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#4285F4" />
+        <Text style={styles.loadingText}>Loading profile...</Text>
+      </View>
+    );
+  }
+
+  // Show error state if no user data
+  if (!user) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Text style={styles.errorText}>Failed to load profile</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={loadUserProfile}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   const ProfileHeader = () => (
     <View style={styles.cardContainer}>
       <View style={styles.avatarSection}>
         <View style={styles.avatarContainer}>
-          <Image source={{ uri: user.avatar }} style={styles.avatar} />
+          {user.avatar ? (
+            <Image source={{ uri: user.avatar }} style={styles.avatar} />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <Text style={styles.avatarText}>{getInitials()}</Text>
+            </View>
+          )}
           <TouchableOpacity style={styles.editAvatarButton}>
             <Ionicons name="camera" size={16} color="#FFFFFF" />
           </TouchableOpacity>
@@ -197,7 +345,7 @@ const ProfilePage: React.FC = () => {
         </View>
         
         <View style={styles.userInfo}>
-          <Text style={styles.userName}>{user.name}</Text>
+          <Text style={styles.userName}>{getDisplayName()}</Text>
           <Text style={styles.userEmail}>{user.email}</Text>
           <View style={styles.accountTypeContainer}>
             <Text style={[styles.accountType, { 
@@ -292,9 +440,9 @@ const ProfilePage: React.FC = () => {
           <TouchableOpacity
             onPress={handleUpdateProfile}
             style={styles.modalButton}
-            disabled={loading}
+            disabled={updating}
           >
-            {loading ? (
+            {updating ? (
               <ActivityIndicator size="small" color="#4285F4" />
             ) : (
               <Text style={styles.modalSaveText}>Save</Text>
@@ -369,7 +517,7 @@ const ProfilePage: React.FC = () => {
             <MenuItem
               icon="wallet-outline"
               title="Paystack Wallet"
-              subtitle="Connected and verified"
+              subtitle={user.phone_verified ? "Connected and verified" : "Not verified"}
               onPress={() => console.log('Paystack wallet')}
               isLast={true}
             />
@@ -520,6 +668,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 20,
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8F9FA',
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#666',
+    marginTop: 16,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryButton: {
+    backgroundColor: '#4285F4',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   section: {
     marginBottom: 32,
   },
@@ -551,6 +727,21 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     borderWidth: 2,
     borderColor: '#4285F4',
+  },
+  avatarPlaceholder: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#4285F4',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#4285F4',
+  },
+  avatarText: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   editAvatarButton: {
     position: 'absolute',

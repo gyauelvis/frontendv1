@@ -2,11 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React from 'react';
 import {
-    Platform,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 
 interface HeaderProps {
@@ -16,8 +16,8 @@ interface HeaderProps {
   showNotificationBadge?: boolean;
 }
 
-const AppHeader: React.FC<HeaderProps> = ({ 
-  balance, 
+const AppHeader: React.FC<HeaderProps> = ({
+  balance,
   userName = "Elvis",
   onNotificationPress,
   showNotificationBadge = true
@@ -35,7 +35,7 @@ const AppHeader: React.FC<HeaderProps> = ({
                 colors={['#D4A574', '#B08E6B']}
                 style={styles.logoGradient}
               >
-                <Text style={styles.logoText}>F</Text>
+                <Text style={styles.logoText}>{userName[0]}</Text>
               </LinearGradient>
             </View>
             <View>

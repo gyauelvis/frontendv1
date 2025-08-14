@@ -1,18 +1,20 @@
+import { authService, UserProfileData } from '@/lib/auth';
 import * as ImagePicker from 'expo-image-picker';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import {
-    Alert,
-    Dimensions,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
@@ -21,18 +23,57 @@ interface FormData {
   email: string;
   phoneNumber: string;
   password: string;
+  firstName: string;
+  lastName: string;
 }
+
+
+interface CustomInputProps {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  secureTextEntry?: boolean;
+  keyboardType?: 'default' | 'email-address' | 'phone-pad';
+}
+
+const CustomInput: React.FC<CustomInputProps> = ({
+  label,
+  placeholder,
+  value,
+  onChangeText,
+  secureTextEntry = false,
+  keyboardType = 'default',
+}) => (
+  <View style={styles.inputContainer}>
+    <Text style={styles.inputLabel}>{label}</Text>
+    <TextInput
+      style={styles.textInput}
+      placeholder={placeholder}
+      placeholderTextColor="#8C855F"
+      value={value}
+      onChangeText={onChangeText}
+      secureTextEntry={secureTextEntry}
+      keyboardType={keyboardType}
+      autoCapitalize="none"
+    />
+  </View>
+);
 
 const CompleteProfileScreen = () => {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState<number>(2);
+  const [loading, setLoading] = useState<boolean>(false);
   const [formData, setFormData] = useState<FormData>({
     email: '',
     phoneNumber: '',
-    password: ''
+    password: '',
+    firstName: '',
+    lastName: ''
   });
   const [fingerprintEnabled, setFingerprintEnabled] = useState<boolean>(false);
   const [idUploaded, setIdUploaded] = useState<boolean>(false);
+  const [idDocumentUri, setIdDocumentUri] = useState<string>('');
 
   const handleInputChange = (field: keyof FormData, value: string) => {
     setFormData(prev => ({
@@ -44,7 +85,7 @@ const CompleteProfileScreen = () => {
   const handleUploadID = async () => {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
+
       if (!permissionResult.granted) {
         Alert.alert('Permission required', 'Please enable photo access to upload your ID');
         return;
@@ -57,27 +98,28 @@ const CompleteProfileScreen = () => {
         quality: 0.8,
       });
 
-      if (!pickerResult.canceled) {
+      if (!pickerResult.canceled && pickerResult.assets[0]) {
+        setIdDocumentUri(pickerResult.assets[0].uri);
         setIdUploaded(true);
-        Alert.alert('ID Uploaded', 'Your identification document has been successfully uploaded');
+        Alert.alert('ID Selected', 'Your identification document has been selected and will be uploaded when you complete registration');
       }
     } catch (error) {
       console.error('Image picker error:', error);
-      Alert.alert('Upload Error', 'Failed to upload ID. Please try again');
+      Alert.alert('Upload Error', 'Failed to select ID. Please try again');
     }
   };
 
   const toggleBiometric = async (value: boolean) => {
     if (value) {
       const compatible = await LocalAuthentication.hasHardwareAsync();
-      
+
       if (!compatible) {
         Alert.alert('Not Supported', 'Your device does not support biometric authentication');
         return;
       }
 
       const enrolled = await LocalAuthentication.isEnrolledAsync();
-      
+
       if (!enrolled) {
         Alert.alert('Not Set Up', 'Please set up biometric authentication in your device settings');
         return;
@@ -89,38 +131,118 @@ const CompleteProfileScreen = () => {
 
       if (result.success) {
         setFingerprintEnabled(true);
-        Alert.alert('Biometric Enabled', 'Fingerprint authentication has been activated');
+        Alert.alert('Biometric Enabled', 'Fingerprint authentication will be activated after registration');
       }
     } else {
       setFingerprintEnabled(false);
     }
   };
 
-  const handleContinue = () => {
+  const validateForm = (): boolean => {
     if (!formData.email || !formData.phoneNumber || !formData.password) {
       Alert.alert('Missing Information', 'Please fill in all required fields');
-      return;
+      return false;
     }
-    
+
+    if (!formData.firstName || !formData.lastName) {
+      Alert.alert('Missing Information', 'Please enter your first and last name');
+      return false;
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      Alert.alert('Invalid Email', 'Please enter a valid email address');
+      return false;
+    }
+
+    // Password validation
+    if (formData.password.length < 6) {
+      Alert.alert('Weak Password', 'Password must be at least 6 characters long');
+      return false;
+    }
+
     if (!idUploaded) {
       Alert.alert('ID Required', 'Please upload your identification document to continue');
-      return;
+      return false;
     }
-    
-    console.log('Profile completion data:', formData);
-    console.log('Fingerprint enabled:', fingerprintEnabled);
-    
-    // Navigate to login screen
-    router.push('/auth/login');
-    Alert.alert('Profile Completed', 'Your profile has been successfully completed');
+
+    return true;
+  };
+
+  const handleContinue = async () => {
+    if (!validateForm()) return;
+
+    setLoading(true);
+
+    try {
+      // 1. Create user account
+      const userProfileData: UserProfileData = {
+        email: formData.email,
+        phoneNumber: formData.phoneNumber,
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        biometricEnabled: fingerprintEnabled,
+        kycDocumentUri: idDocumentUri,
+        password: formData.password, // Include password for signup
+      };
+
+      const signUpResult = await authService.signUpUser(userProfileData);
+
+      if (!signUpResult.success) {
+        Alert.alert('Registration Failed', signUpResult.error || 'Failed to create account');
+        setLoading(false);
+        return;
+      }
+
+      // 2. Upload KYC document if provided
+      if (idDocumentUri && signUpResult.userId) {
+        const uploadResult = await authService.uploadKYCDocument({
+          userId: signUpResult.userId,
+          documentUri: idDocumentUri,
+          documentType: 'other' // You might want to add a picker for document type
+        });
+
+        if (!uploadResult.success) {
+          console.warn('KYC upload failed:', uploadResult.error);
+          // Don't fail the entire registration if KYC upload fails
+        }
+      }
+
+      setLoading(false);
+
+      Alert.alert(
+        'Registration Successful',
+        'Your account has been created successfully!',
+        [
+          {
+            text: 'OK',
+            onPress: () => router.replace('/auth/login')
+          }
+        ]
+      );
+      router.push('/auth/login');
+
+    } catch (error) {
+      setLoading(false);
+      Alert.alert('Registration Failed', 'An unexpected error occurred. Please try again.');
+      console.error('Registration error:', error);
+    }
   };
 
   const handleGoBack = () => {
     router.back();
     setCurrentStep(1);
-    setFormData({ email: '', phoneNumber: '', password: '' });
+    setFormData({
+      email: '',
+      phoneNumber: '',
+      password: '',
+      firstName: '',
+      lastName: ''
+    });
     setFingerprintEnabled(false);
     setIdUploaded(false);
+    setIdDocumentUri('');
   };
 
   const ProgressDots = () => (
@@ -137,54 +259,25 @@ const CompleteProfileScreen = () => {
     </View>
   );
 
-  interface CustomInputProps {
-    label: string;
-    placeholder: string;
-    value: string;
-    onChangeText: (text: string) => void;
-    secureTextEntry?: boolean;
-    keyboardType?: 'default' | 'email-address' | 'phone-pad';
-  }
 
-  const CustomInput: React.FC<CustomInputProps> = ({ 
-    label, 
-    placeholder, 
-    value, 
-    onChangeText, 
-    secureTextEntry = false, 
-    keyboardType = 'default' 
-  }) => (
-    <View style={styles.inputContainer}>
-      <Text style={styles.inputLabel}>{label}</Text>
-      <TextInput
-        style={styles.textInput}
-        placeholder={placeholder}
-        placeholderTextColor="#8C855F"
-        value={value}
-        onChangeText={onChangeText}
-        secureTextEntry={secureTextEntry}
-        keyboardType={keyboardType}
-        autoCapitalize="none"
-      />
-    </View>
-  );
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Geometric background pattern */}
       <View style={styles.geometricPattern} />
-      
-      <ScrollView 
+
+      <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.backButton} 
+          <TouchableOpacity
+            style={styles.backButton}
             onPress={handleGoBack}
             activeOpacity={0.7}
+            disabled={loading}
           >
             <Text style={styles.backArrow}>←</Text>
           </TouchableOpacity>
@@ -197,6 +290,20 @@ const CompleteProfileScreen = () => {
 
         {/* Form Section */}
         <View style={styles.formSection}>
+          <CustomInput
+            label="First Name"
+            placeholder="Enter your first name"
+            value={formData.firstName}
+            onChangeText={(value) => handleInputChange('firstName', value)}
+          />
+
+          <CustomInput
+            label="Last Name"
+            placeholder="Enter your last name"
+            value={formData.lastName}
+            onChangeText={(value) => handleInputChange('lastName', value)}
+          />
+
           <CustomInput
             label="Email"
             placeholder="Enter your email"
@@ -215,7 +322,7 @@ const CompleteProfileScreen = () => {
 
           <CustomInput
             label="Password"
-            placeholder="Create a password"
+            placeholder="Create a password (min. 6 characters)"
             value={formData.password}
             onChangeText={(value) => handleInputChange('password', value)}
             secureTextEntry={true}
@@ -228,14 +335,15 @@ const CompleteProfileScreen = () => {
           <Text style={styles.sectionDescription}>
             Upload a clear photo of your ID to verify your identity.
           </Text>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={[
               styles.uploadContainer,
               idUploaded && styles.uploadContainerSuccess
             ]}
             onPress={handleUploadID}
             activeOpacity={0.8}
+            disabled={loading}
           >
             <View style={styles.uploadContent}>
               <View style={[
@@ -247,12 +355,12 @@ const CompleteProfileScreen = () => {
                 </Text>
               </View>
               <Text style={styles.uploadTitle}>
-                {idUploaded ? 'ID Verified' : 'Upload ID'}
+                {idUploaded ? 'ID Selected' : 'Upload ID'}
               </Text>
               <Text style={styles.uploadSubtitle}>
-                {idUploaded 
-                  ? 'Identification document successfully uploaded' 
-                  : 'Tap to upload your identification document'}
+                {idUploaded
+                  ? 'Identification document ready for upload'
+                  : 'Tap to select your identification document'}
               </Text>
             </View>
           </TouchableOpacity>
@@ -264,7 +372,7 @@ const CompleteProfileScreen = () => {
           <Text style={styles.sectionDescription}>
             Enable fingerprint authentication for faster and secure access.
           </Text>
-          
+
           <View style={styles.biometricContainer}>
             <View style={styles.biometricContent}>
               <View style={[
@@ -286,17 +394,23 @@ const CompleteProfileScreen = () => {
               thumbColor={fingerprintEnabled ? '#FFFFFF' : '#FFFFFF'}
               ios_backgroundColor="#F5F4F0"
               style={styles.switch}
+              disabled={loading}
             />
           </View>
         </View>
 
         {/* Continue Button */}
-        <TouchableOpacity 
-          style={styles.continueButton}
+        <TouchableOpacity
+          style={[styles.continueButton, loading && styles.continueButtonDisabled]}
           onPress={handleContinue}
           activeOpacity={0.9}
+          disabled={loading}
         >
-          <Text style={styles.continueButtonText}>Continue</Text>
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <Text style={styles.continueButtonText}>Create Account</Text>
+          )}
         </TouchableOpacity>
 
         <View style={styles.bottomSpacer} />
@@ -536,6 +650,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 14,
     elevation: 8,
+  },
+  continueButtonDisabled: {
+    backgroundColor: '#B8B8B8',
+    shadowOpacity: 0.1,
   },
   continueButtonText: {
     color: '#FFFFFF',

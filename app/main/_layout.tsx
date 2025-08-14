@@ -1,63 +1,69 @@
-import { Slot, usePathname, useRouter } from 'expo-router';
-import React from 'react';
-import {
-    SafeAreaView,
-    StatusBar,
-    StyleSheet,
-    View,
-} from 'react-native';
 
 import BottomNavigation, { NavigationItem } from '@/components/evault-components/bottom-nav';
 import AppHeader from '@/components/evault-components/e-header';
+import { authService } from '@/lib/auth';
+import { Slot, usePathname, useRouter } from 'expo-router';
+import React, { useEffect } from 'react';
+import {
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  View,
+} from 'react-native';
+
+interface UserProfile {
+  id: string;
+  email: string;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+}
 
 const RootLayout: React.FC = () => {
   const router = useRouter();
   const pathname = usePathname();
+  const [userProfile, setUserProfile] = React.useState<UserProfile | null>(null);
 
-  // Navigation items configuration
   const navigationItems: NavigationItem[] = [
-    { 
-      id: 'home', 
-      title: 'Home', 
-      icon: 'home-outline', 
+    {
+      id: 'home',
+      title: 'Home',
+      icon: 'home-outline',
       isActive: pathname === '/main/main'
     },
-    { 
-      id: 'send', 
-      title: 'Send', 
-      icon: 'send-outline', 
+    {
+      id: 'send',
+      title: 'Send',
+      icon: 'send-outline',
       isActive: pathname === '/send' || pathname === '/main/send'
     },
-    { 
-      id: 'analytics', 
-      title: 'Analytics', 
-      icon: 'analytics-outline', 
+    {
+      id: 'analytics',
+      title: 'Analytics',
+      icon: 'analytics-outline',
       isActive: pathname === '/analytics' || pathname === '/main/analytics'
     },
-    { 
-      id: 'challenges', 
-      title: 'Challenges', 
-      icon: 'trophy-outline', 
-      isActive: pathname === '/challenges'
+    {
+      id: 'challenges',
+      title: 'Challenges',
+      icon: 'trophy-outline',
+      isActive: pathname === '/main/challenge'
     },
-    { 
-      id: 'profile', 
-      title: 'Profile', 
-      icon: 'person-outline', 
-      isActive: pathname === '/profile'
+    {
+      id: 'profile',
+      title: 'Profile',
+      icon: 'person-outline',
+      isActive: pathname === '/main/profile'
     },
   ];
 
-  // Event handlers
   const handleNotificationPress = (): void => {
     console.log('Notification pressed');
-    // Navigate to notifications screen or open notification modal
-    // router.push('/notifications');
   };
 
   const handleNavigationPress = (id: string): void => {
     console.log(`Navigation pressed: ${id}`);
-    
+
     switch (id) {
       case 'home':
         router.push('/main/main');
@@ -69,7 +75,7 @@ const RootLayout: React.FC = () => {
         router.push('/main/analytics');
         break;
       case 'challenges':
-        router.push('/challenges' as never);
+        router.push('/main/challenge');
         break;
       case 'profile':
         router.push('/main/profile');
@@ -79,25 +85,44 @@ const RootLayout: React.FC = () => {
     }
   };
 
-  // Get current user name - this could come from context/state management
-  const getCurrentUserName = (): string => {
-    // This could be retrieved from user context, AsyncStorage, or state management
-    return 'Elvis';
-  };
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      try {
+        const { user } = await authService.getCurrentUser();
 
-  // Determine if notification badge should be shown
+        if (user) {
+          const profileResult = await authService.getUserProfile(user.id);
+
+          if (profileResult.success && profileResult.data) {
+            setUserProfile(profileResult.data);
+          } else {
+            setUserProfile({
+              id: user.id,
+              email: user.email || '',
+              full_name: user.user_metadata?.full_name,
+              first_name: user.user_metadata?.first_name,
+              last_name: user.user_metadata?.last_name,
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error loading user profile:', error);
+      }
+    };
+    loadUserProfile();
+  }, []);
+
   const getNotificationBadgeStatus = (): boolean => {
-    // This could be based on actual notification state
     return true;
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      
+
       {/* Shared Header */}
       <AppHeader
-        userName={getCurrentUserName()}
+        userName={userProfile?.first_name || ''}
         onNotificationPress={handleNotificationPress}
         showNotificationBadge={getNotificationBadgeStatus()}
       />

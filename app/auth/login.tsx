@@ -1,7 +1,10 @@
+import { authService } from '@/lib/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+    ActivityIndicator,
     Alert,
     Dimensions,
     SafeAreaView,
@@ -30,7 +33,9 @@ const LoginScreen = () => {
     const router = useRouter();
     const otpInputRef = useRef<TextInput>(null);
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    
+    const [loading, setLoading] = useState<boolean>(false);
+    const [otpLoading, setOtpLoading] = useState<boolean>(false);
+
     const [formData, setFormData] = useState<FormData>({
         emailOrPhone: '',
         password: '',
@@ -42,37 +47,44 @@ const LoginScreen = () => {
     const [biometricAvailable, setBiometricAvailable] = useState<boolean>(false);
     const [rememberMe, setRememberMe] = useState<boolean>(false);
     const [isFirstTime, setIsFirstTime] = useState<boolean>(true);
+    const [pendingUserId, setPendingUserId] = useState<string>('');
 
     // Check if biometric authentication is available and load saved credentials
     useEffect(() => {
-        const checkBiometrics = async () => {
+        const initializeAuth = async () => {
+            // Check biometrics
             const compatible = await LocalAuthentication.hasHardwareAsync();
             const enrolled = await LocalAuthentication.isEnrolledAsync();
 
             if (compatible && enrolled) {
                 setBiometricAvailable(true);
             }
-        };
 
-        // Simulate checking for saved credentials (in real app, you'd use AsyncStorage)
-        const checkSavedCredentials = () => {
-            // This is where you'd check AsyncStorage for saved credentials
-            // For demo purposes, we'll assume this is not the first time if there are any saved values
-            const savedEmail = ''; // Get from AsyncStorage
-            const savedRememberMe = false; // Get from AsyncStorage
-            
-            if (savedEmail) {
-                setFormData(prev => ({ ...prev, emailOrPhone: savedEmail }));
-                setRememberMe(savedRememberMe);
-                setIsFirstTime(false);
+            // Load saved credentials
+            try {
+                const savedEmail = await AsyncStorage.getItem('savedEmail');
+                const savedRememberMe = await AsyncStorage.getItem('rememberMe');
+
+                if (savedEmail) {
+                    setFormData(prev => ({ ...prev, emailOrPhone: savedEmail }));
+                    setRememberMe(savedRememberMe === 'true');
+                    setIsFirstTime(false);
+                }
+            } catch (error) {
+                console.error('Error loading saved credentials:', error);
             }
+
+            // // Check if user is already logged in
+            // const { user } = await authService.getCurrentUser();
+            // if (user) {
+            //     router.replace('/(tabs)');
+            // }
         };
 
-        checkBiometrics();
-        checkSavedCredentials();
+        initializeAuth();
     }, []);
 
-    // Optimized timer effect with useCallback to prevent unnecessary re-renders
+    // Timer effect
     const updateTimer = useCallback(() => {
         setTimer(prevTimer => {
             if (prevTimer.seconds > 0) {
@@ -94,9 +106,6 @@ const LoginScreen = () => {
                 clearInterval(timerRef.current);
                 timerRef.current = null;
             }
-            if (isTimerActive && timer.minutes === 0 && timer.seconds === 0) {
-                setIsTimerActive(false);
-            }
         }
 
         return () => {
@@ -114,38 +123,92 @@ const LoginScreen = () => {
         }));
     }, []);
 
-    const saveCredentials = useCallback(() => {
-        if (rememberMe) {
-            // In a real app, save to AsyncStorage
-            // AsyncStorage.setItem('savedEmail', formData.emailOrPhone);
-            // AsyncStorage.setItem('rememberMe', 'true');
-            console.log('Credentials saved for future login');
-        } else {
-            // Clear saved credentials
-            // AsyncStorage.removeItem('savedEmail');
-            // AsyncStorage.removeItem('rememberMe');
-            console.log('Credentials cleared');
+    const saveCredentials = useCallback(async () => {
+        try {
+            if (rememberMe) {
+                await AsyncStorage.setItem('savedEmail', formData.emailOrPhone);
+                await AsyncStorage.setItem('rememberMe', 'true');
+            } else {
+                await AsyncStorage.removeItem('savedEmail');
+                await AsyncStorage.removeItem('rememberMe');
+            }
+        } catch (error) {
+            console.error('Error saving credentials:', error);
         }
     }, [rememberMe, formData.emailOrPhone]);
 
-    const handleLogin = useCallback(() => {
+    const handleLogin = useCallback(async () => {
         if (!formData.emailOrPhone || !formData.password) {
             Alert.alert('Missing Information', 'Please fill in all required fields');
             return;
         }
 
-        // Save credentials if remember me is checked
-        saveCredentials();
+        setLoading(true);
 
-        setShowOTP(true);
-        setTimer({ minutes: 0, seconds: 30 });
-        setIsTimerActive(true);
-        
-        // Focus the OTP input after a short delay to ensure the component is rendered
-        setTimeout(() => {
-            otpInputRef.current?.focus();
-        }, 100);
-    }, [formData.emailOrPhone, formData.password, saveCredentials]);
+        try {
+            // Attempt login
+            const result = await authService.signInUser(formData.emailOrPhone, formData.password);
+
+            if (!result.success) {
+                Alert.alert('Login Failed', result.error || 'Invalid credentials');
+                setLoading(false);
+                return;
+            }
+
+            // Save credentials if remember me is checked
+            await saveCredentials();
+
+            // Check if user has verified email
+            if (result.user && !result.user.email_confirmed_at) {
+                Alert.alert(
+                    'Email Verification Required',
+                    'Please check your email and click the verification link before proceeding.',
+                    [{ text: 'OK' }]
+                );
+                setLoading(false);
+                return;
+            }
+
+            // Get user profile to check if phone is verified
+            if (result.user) {
+                const profileResult = await authService.getUserProfile(result.user.id);
+
+                if (profileResult.success && profileResult.data) {
+                    // Check if phone verification is needed
+                    const needsPhoneVerification = !profileResult.data.phone_verified;
+
+                    if (needsPhoneVerification && formData.emailOrPhone.includes('@')) {
+                        // If logging in with email but phone needs verification
+                        setPendingUserId(result.user.id);
+                        setShowOTP(true);
+                        setTimer({ minutes: 0, seconds: 30 });
+                        setIsTimerActive(true);
+
+                        // Send OTP
+                        await authService.sendOTP(profileResult.data.phone_number);
+
+                        setTimeout(() => {
+                            otpInputRef.current?.focus();
+                        }, 100);
+
+                        setLoading(false);
+                        return;
+                    }
+                }
+            }
+
+            // Login successful
+            setLoading(false);
+            Alert.alert('Login Successful', 'Welcome back!', [
+                { text: 'OK', onPress: () => router.push('/main/main') }
+            ]);
+
+        } catch (error) {
+            setLoading(false);
+            Alert.alert('Login Error', 'An unexpected error occurred. Please try again.');
+            console.error('Login error:', error);
+        }
+    }, [formData.emailOrPhone, formData.password, saveCredentials, router]);
 
     const handleBiometrics = async () => {
         if (!biometricAvailable) {
@@ -154,40 +217,77 @@ const LoginScreen = () => {
         }
 
         try {
+            // Check if user has biometric credentials stored
+            const savedUserId = await AsyncStorage.getItem('biometricUserId');
+
+            if (!savedUserId) {
+                Alert.alert('Biometric Not Set Up', 'Please log in with your password first to enable biometric authentication');
+                return;
+            }
+
             const result = await LocalAuthentication.authenticateAsync({
                 promptMessage: 'Authenticate to login',
                 fallbackLabel: 'Use Password Instead'
             });
 
             if (result.success) {
-                Alert.alert('Authentication Successful', 'Welcome back!', [
-                    { text: 'OK', onPress: () => router.replace('/(tabs)') }
-                ]);
+                // Get user data and sign them in
+                const { user } = await authService.getCurrentUser();
+
+                if (user || savedUserId) {
+                    Alert.alert('Authentication Successful', 'Welcome back!', [
+                        { text: 'OK', onPress: () => router.replace('/(tabs)') }
+                    ]);
+                } else {
+                    Alert.alert('Authentication Failed', 'Please log in with your password');
+                }
             }
         } catch (error) {
             Alert.alert('Authentication Failed', 'Biometric authentication failed. Please try again');
         }
     };
 
-    const handleSocialLogin = useCallback((platform: string) => {
-        Alert.alert(`${platform} Login`, `${platform} authentication successful!`, [
-            { text: 'OK', onPress: () => router.replace('/(tabs)') }
-        ]);
-    }, [router]);
-
-    const handleResendOTP = useCallback(() => {
-        if (timer.minutes === 0 && timer.seconds === 0) {
-            setTimer({ minutes: 0, seconds: 30 });
-            setIsTimerActive(true);
-            Alert.alert('OTP Sent', 'A new OTP has been sent to your device');
+    const handleSocialLogin = useCallback(async (platform: string) => {
+        // Implement social login based on platform
+        if (platform === 'Google') {
+            // Implement Google OAuth
+            Alert.alert('Coming Soon', 'Google login will be available soon');
+        } else if (platform === 'Apple') {
+            // Implement Apple Sign In
+            Alert.alert('Coming Soon', 'Apple Sign In will be available soon');
         }
-    }, [timer.minutes, timer.seconds]);
+    }, []);
+
+    const handleResendOTP = useCallback(async () => {
+        if (timer.minutes === 0 && timer.seconds === 0) {
+            setOtpLoading(true);
+
+            try {
+                // Get user phone number and resend OTP
+                const profileResult = await authService.getUserProfile(pendingUserId);
+
+                if (profileResult.success && profileResult.data?.phone_number) {
+                    await authService.sendOTP(profileResult.data.phone_number);
+                    setTimer({ minutes: 0, seconds: 30 });
+                    setIsTimerActive(true);
+                    Alert.alert('OTP Sent', 'A new verification code has been sent to your phone');
+                } else {
+                    Alert.alert('Error', 'Failed to resend OTP. Please try logging in again.');
+                }
+            } catch (error) {
+                Alert.alert('Error', 'Failed to resend OTP. Please try again.');
+            }
+
+            setOtpLoading(false);
+        }
+    }, [timer.minutes, timer.seconds, pendingUserId]);
 
     const handleGoBack = useCallback(() => {
         if (showOTP) {
             setShowOTP(false);
             setFormData(prev => ({ ...prev, otp: '' }));
             setIsTimerActive(false);
+            setPendingUserId('');
             if (timerRef.current) {
                 clearInterval(timerRef.current);
                 timerRef.current = null;
@@ -197,20 +297,57 @@ const LoginScreen = () => {
         }
     }, [showOTP, router]);
 
-    const handleSubmitOTP = useCallback(() => {
+    const handleSubmitOTP = useCallback(async () => {
         if (!formData.otp || formData.otp.length < 6) {
             Alert.alert('Invalid OTP', 'Please enter the 6-digit verification code');
             return;
         }
 
-        // Simulate OTP verification
-        Alert.alert('Login Successful', 'Welcome! You have been logged in successfully.', [
-            { text: 'OK', onPress: () => router.replace('/main/main') }
-        ]);
-    }, [formData.otp, router]);
+        setOtpLoading(true);
+
+        try {
+            // Get user phone number for verification
+            const profileResult = await authService.getUserProfile(pendingUserId);
+
+            if (!profileResult.success || !profileResult.data?.phone_number) {
+                Alert.alert('Error', 'Failed to verify OTP. Please try logging in again.');
+                setOtpLoading(false);
+                return;
+            }
+
+            // Verify OTP
+            const verifyResult = await authService.verifyOTP(profileResult.data.phone_number, formData.otp);
+
+            if (!verifyResult.success) {
+                Alert.alert('Invalid OTP', verifyResult.error || 'The verification code is incorrect');
+                setOtpLoading(false);
+                return;
+            }
+
+            // Update user profile to mark phone as verified
+            await authService.updateUserProfile(pendingUserId, {
+                phone_verified: true,
+                phone_verified_at: new Date().toISOString()
+            });
+
+            // Save biometric user ID if biometric was enabled during registration
+            if (profileResult.data.user_biometric?.length > 0) {
+                await AsyncStorage.setItem('biometricUserId', pendingUserId);
+            }
+
+            setOtpLoading(false);
+            Alert.alert('Verification Successful', 'Welcome! You have been logged in successfully.', [
+                { text: 'OK', onPress: () => router.replace('/(tabs)') }
+            ]);
+        } catch (error) {
+            setOtpLoading(false);
+            Alert.alert('Verification Failed', 'An error occurred during verification. Please try again.');
+            console.error('OTP verification error:', error);
+        }
+    }, [formData.otp, pendingUserId, router]);
 
     const handleForgotPassword = useCallback(() => {
-        router.push('ForgotPassword' as never);
+        router.push('/auth/forgot-password' as never);
     }, [router]);
 
     const toggleRememberMe = useCallback(() => {
@@ -228,7 +365,34 @@ const LoginScreen = () => {
         autoFocus?: boolean;
     }
 
- 
+    const CustomInput: React.FC<CustomInputProps> = React.memo(({
+        placeholder,
+        value,
+        onChangeText,
+        secureTextEntry = false,
+        keyboardType = 'default',
+        inputRef,
+        maxLength,
+        autoFocus = false
+    }) => (
+        <TextInput
+            ref={inputRef}
+            style={styles.textInput}
+            placeholder={placeholder}
+            placeholderTextColor="#8C855F"
+            value={value}
+            onChangeText={onChangeText}
+            secureTextEntry={secureTextEntry}
+            keyboardType={keyboardType}
+            autoCapitalize="none"
+            maxLength={maxLength}
+            autoFocus={autoFocus}
+            returnKeyType={keyboardType === 'numeric' ? 'done' : 'next'}
+            blurOnSubmit={false}
+            editable={!loading && !otpLoading}
+        />
+    ));
+
     // Memoize TimerDisplay to prevent unnecessary re-renders
     const TimerDisplay = useMemo(() => (
         <View style={styles.timerContainer}>
@@ -263,10 +427,11 @@ const LoginScreen = () => {
                         style={styles.backButton}
                         onPress={handleGoBack}
                         activeOpacity={0.7}
+                        disabled={loading || otpLoading}
                     >
                         <Text style={styles.backArrow}>←</Text>
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>{showOTP ? 'Verify OTP' : 'Welcome Back'}</Text>
+                    <Text style={styles.headerTitle}>{showOTP ? 'Verify Phone' : 'Welcome Back'}</Text>
                     <View style={styles.headerSpacer} />
                 </View>
 
@@ -277,8 +442,8 @@ const LoginScreen = () => {
                             {isFirstTime ? 'Welcome!' : 'Welcome Back!'}
                         </Text>
                         <Text style={styles.welcomeSubtitle}>
-                            {isFirstTime 
-                                ? 'Sign in to get started with your account' 
+                            {isFirstTime
+                                ? 'Sign in to get started with your account'
                                 : 'Sign in to continue where you left off'
                             }
                         </Text>
@@ -298,16 +463,17 @@ const LoginScreen = () => {
                         <CustomInput
                             placeholder="Password"
                             value={formData.password}
-                            onChangeText={(value : string) => handleInputChange('password', value)}
+                            onChangeText={(value: string) => handleInputChange('password', value)}
                             secureTextEntry={true}
                         />
 
                         {/* Remember Me and Forgot Password */}
                         <View style={styles.optionsRow}>
-                            <TouchableOpacity 
+                            <TouchableOpacity
                                 style={styles.rememberMeContainer}
                                 onPress={toggleRememberMe}
                                 activeOpacity={0.7}
+                                disabled={loading}
                             >
                                 <View style={[styles.checkbox, rememberMe && styles.checkboxChecked]}>
                                     {rememberMe && <Text style={styles.checkmark}>✓</Text>}
@@ -315,17 +481,25 @@ const LoginScreen = () => {
                                 <Text style={styles.rememberMeText}>Remember Me</Text>
                             </TouchableOpacity>
 
-                            <TouchableOpacity onPress={handleForgotPassword}>
+                            <TouchableOpacity
+                                onPress={handleForgotPassword}
+                                disabled={loading}
+                            >
                                 <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
                             </TouchableOpacity>
                         </View>
 
                         <TouchableOpacity
-                            style={styles.primaryButton}
+                            style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
                             onPress={handleLogin}
                             activeOpacity={0.9}
+                            disabled={loading}
                         >
-                            <Text style={styles.primaryButtonText}>Sign In</Text>
+                            {loading ? (
+                                <ActivityIndicator color="#FFFFFF" size="small" />
+                            ) : (
+                                <Text style={styles.primaryButtonText}>Sign In</Text>
+                            )}
                         </TouchableOpacity>
 
                         {/* Biometric Login */}
@@ -334,6 +508,7 @@ const LoginScreen = () => {
                                 style={styles.biometricButton}
                                 onPress={handleBiometrics}
                                 activeOpacity={0.8}
+                                disabled={loading}
                             >
                                 <View style={styles.biometricIcon}>
                                     <Text style={styles.biometricEmoji}>👆</Text>
@@ -355,6 +530,7 @@ const LoginScreen = () => {
                                 style={styles.socialButton}
                                 onPress={() => handleSocialLogin('Google')}
                                 activeOpacity={0.8}
+                                disabled={loading}
                             >
                                 <Text style={styles.socialButtonText}>Google</Text>
                             </TouchableOpacity>
@@ -363,6 +539,7 @@ const LoginScreen = () => {
                                 style={styles.socialButton}
                                 onPress={() => handleSocialLogin('Apple')}
                                 activeOpacity={0.8}
+                                disabled={loading}
                             >
                                 <Text style={styles.socialButtonText}>Apple</Text>
                             </TouchableOpacity>
@@ -373,8 +550,8 @@ const LoginScreen = () => {
                 {/* OTP Section */}
                 {showOTP && (
                     <View style={styles.otpSection}>
-                        <Text style={styles.otpTitle}>Enter Verification Code</Text>
-                        <Text style={styles.otpSubtitle}>We sent a 6-digit code to your device</Text>
+                        <Text style={styles.otpTitle}>Verify Your Phone</Text>
+                        <Text style={styles.otpSubtitle}>We sent a 6-digit code to your phone number</Text>
 
                         <CustomInput
                             placeholder="Enter OTP"
@@ -391,26 +568,35 @@ const LoginScreen = () => {
                         <TouchableOpacity
                             style={[
                                 styles.resendButton,
-                                (timer.minutes > 0 || timer.seconds > 0) && styles.resendButtonDisabled
+                                ((timer.minutes > 0 || timer.seconds > 0) || otpLoading) && styles.resendButtonDisabled
                             ]}
                             onPress={handleResendOTP}
-                            disabled={timer.minutes > 0 || timer.seconds > 0}
+                            disabled={(timer.minutes > 0 || timer.seconds > 0) || otpLoading}
                             activeOpacity={0.7}
                         >
-                            <Text style={[
-                                styles.resendButtonText,
-                                (timer.minutes > 0 || timer.seconds > 0) && styles.resendButtonTextDisabled
-                            ]}>
-                                Resend OTP
-                            </Text>
+                            {otpLoading ? (
+                                <ActivityIndicator color="#D4A574" size="small" />
+                            ) : (
+                                <Text style={[
+                                    styles.resendButtonText,
+                                    (timer.minutes > 0 || timer.seconds > 0) && styles.resendButtonTextDisabled
+                                ]}>
+                                    Resend OTP
+                                </Text>
+                            )}
                         </TouchableOpacity>
 
                         <TouchableOpacity
-                            style={styles.primaryButton}
+                            style={[styles.primaryButton, otpLoading && styles.primaryButtonDisabled]}
                             onPress={handleSubmitOTP}
                             activeOpacity={0.9}
+                            disabled={otpLoading}
                         >
-                            <Text style={styles.primaryButtonText}>Verify & Sign In</Text>
+                            {otpLoading ? (
+                                <ActivityIndicator color="#FFFFFF" size="small" />
+                            ) : (
+                                <Text style={styles.primaryButtonText}>Verify & Sign In</Text>
+                            )}
                         </TouchableOpacity>
                     </View>
                 )}
@@ -514,125 +700,6 @@ const styles = StyleSheet.create({
         color: '#343A40',
         borderWidth: 1,
         borderColor: '#F1F3F5',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
-    },
-    optionsRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginTop: -10,
-    },
-    rememberMeContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    checkbox: {
-        width: 20,
-        height: 20,
-        borderRadius: 4,
-        borderWidth: 2,
-        borderColor: '#D4A574',
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#FFFFFF',
-    },
-    checkboxChecked: {
-        backgroundColor: '#D4A574',
-    },
-    checkmark: {
-        color: '#FFFFFF',
-        fontSize: 12,
-        fontWeight: '700',
-    },
-    rememberMeText: {
-        fontSize: 14,
-        fontWeight: '500',
-        color: '#343A40',
-    },
-    forgotPasswordText: {
-        fontSize: 14,
-        fontWeight: '500',
-        color: '#D4A574',
-    },
-    primaryButton: {
-        backgroundColor: '#D4A574',
-        height: 58,
-        borderRadius: 18,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginTop: 10,
-        shadowColor: '#D4A574',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.3,
-        shadowRadius: 14,
-        elevation: 8,
-    },
-    primaryButtonText: {
-        color: '#FFFFFF',
-        fontSize: 17,
-        fontWeight: '700',
-        letterSpacing: 0.3,
-    },
-    biometricButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#F8F9FA',
-        height: 50,
-        borderRadius: 16,
-        gap: 12,
-        borderWidth: 1,
-        borderColor: '#F1F3F5',
-    },
-    biometricIcon: {
-        width: 24,
-        height: 24,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    biometricEmoji: {
-        fontSize: 18,
-    },
-    biometricButtonText: {
-        fontSize: 15,
-        fontWeight: '600',
-        color: '#343A40',
-        letterSpacing: -0.2,
-    },
-    dividerContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginVertical: 10,
-        gap: 12,
-    },
-    dividerLine: {
-        flex: 1,
-        height: 1,
-        backgroundColor: '#E9ECEF',
-    },
-    dividerText: {
-        fontSize: 14,
-        color: '#6C757D',
-        fontWeight: '500',
-    },
-    socialContainer: {
-        flexDirection: 'row',
-        gap: 12,
-    },
-    socialButton: {
-        flex: 1,
-        backgroundColor: '#F8F9FA',
-        height: 50,
-        borderRadius: 16,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: '#F1F3F5',
     },
     socialButtonText: {
         fontSize: 14,
@@ -712,32 +779,132 @@ const styles = StyleSheet.create({
     bottomSpacer: {
         height: 50,
     },
+    otpInput: {
+        borderColor: '#F1F3F5',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    optionsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: -10,
+    },
+    rememberMeContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    checkbox: {
+        width: 20,
+        height: 20,
+        borderRadius: 4,
+        borderWidth: 2,
+        borderColor: '#D4A574',
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+    },
+    checkboxChecked: {
+        backgroundColor: '#D4A574',
+    },
+    checkmark: {
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    rememberMeText: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: '#343A40',
+    },
+    forgotPasswordText: {
+        fontSize: 14,
+        fontWeight: '500',
+        color: '#D4A574',
+    },
+    primaryButton: {
+        backgroundColor: '#D4A574',
+        height: 58,
+        borderRadius: 18,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: 10,
+        shadowColor: '#D4A574',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.3,
+        shadowRadius: 14,
+        elevation: 8,
+    },
+    primaryButtonDisabled: {
+        backgroundColor: '#B8B8B8',
+        shadowOpacity: 0.1,
+    },
+    primaryButtonText: {
+        color: '#FFFFFF',
+        fontSize: 17,
+        fontWeight: '700',
+        letterSpacing: 0.3,
+    },
+    biometricButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#F8F9FA',
+        height: 50,
+        borderRadius: 16,
+        gap: 12,
+        borderWidth: 1,
+        borderColor: '#F1F3F5',
+    },
+    biometricIcon: {
+        width: 24,
+        height: 24,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    biometricEmoji: {
+        fontSize: 18,
+    },
+    biometricButtonText: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#343A40',
+        letterSpacing: -0.2,
+    },
+    dividerContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginVertical: 10,
+        gap: 12,
+    },
+    dividerLine: {
+        flex: 1,
+        height: 1,
+        backgroundColor: '#E9ECEF',
+    },
+    dividerText: {
+        fontSize: 14,
+        color: '#6C757D',
+        fontWeight: '500',
+    },
+    socialContainer: {
+        flexDirection: 'row',
+        gap: 12,
+    },
+    socialButton: {
+        flex: 1,
+        backgroundColor: '#F8F9FA',
+        height: 50,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1
+    }
 });
 
+
 export default LoginScreen;
-   const CustomInput: React.FC<any> = React.memo(({
-        placeholder,
-        value,
-        onChangeText,
-        secureTextEntry = false,
-        keyboardType = 'default',
-        inputRef,
-        maxLength,
-        autoFocus = false
-    }) => (
-        <TextInput
-            ref={inputRef}
-            style={styles.textInput}
-            placeholder={placeholder}
-            placeholderTextColor="#8C855F"
-            value={value}
-            onChangeText={onChangeText}
-            secureTextEntry={secureTextEntry}
-            keyboardType={keyboardType}
-            autoCapitalize="none"
-            maxLength={maxLength}
-            autoFocus={autoFocus}
-            returnKeyType={keyboardType === 'numeric' ? 'done' : 'next'}
-            blurOnSubmit={false}
-        />
-    ));
