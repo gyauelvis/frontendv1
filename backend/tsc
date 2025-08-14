@@ -1,0 +1,10 @@
+
+src/routes/auth.ts:388:27 - error TS2339: Property 'status' does not exist on type '{ id: str
+src/routes/auth.ts:388:27 - error TS2339: Property 'status' does not exist on type '{ id: string; account_number: string; available_balance: Decimal; currency: string; account_type: Acco
+src/routes/auth.ts:388:27 - error TS2339: Property 'status' does not exist on type '{ id: string; account_number: string; available_balance: Decimal; currency: string; account_type: AccountType; }'.
+
+388           status: account.status
+                              ~~~~~~
+
+
+Found 1 error in src/routes/auth.ts:388

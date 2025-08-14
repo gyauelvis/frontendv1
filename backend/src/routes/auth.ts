@@ -1,10 +1,10 @@
-import { Router, Request, Response } from 'express';
-import { body, validationResult } from 'express-validator';
-import { ApiResponse, LoginRequest, RegisterRequest } from '../types';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { Request, Response, Router } from 'express';
+import { body, validationResult } from 'express-validator';
+import jwt from 'jsonwebtoken';
+import { ApiResponse, LoginRequest, RegisterRequest } from '../types';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -353,7 +353,8 @@ router.get('/profile', async (req: Request, res: Response) => {
             account_number: true,
             available_balance: true,
             currency: true,
-            account_type: true
+            account_type: true,
+            status: true
           }
         }
       }
@@ -378,7 +379,15 @@ router.get('/profile', async (req: Request, res: Response) => {
         firstName: user.first_name,
         lastName: user.last_name,
         phone: user.phone_number,
-        accounts: user.accounts
+        accounts: user.accounts.map(account => ({
+          id: account.id,
+          accountNumber: account.account_number,
+          balance: account.available_balance, // Map to balance field
+          availableBalance: account.available_balance,
+          currency: account.currency,
+          accountType: account.account_type,
+          status: account.status
+        }))
       },
       timestamp: new Date()
     };

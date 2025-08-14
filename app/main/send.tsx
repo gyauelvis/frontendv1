@@ -210,9 +210,12 @@ const SendMoneyScreen: React.FC = () => {
       
       setIsLoadingAccounts(true);
       try {
-        const response = await apiClient.get(`/payments/accounts/${user.id}`);
-        if (response.data.success) {
-          setUserAccounts(response.data.data);
+        // Get user's accounts
+        const response = await apiClient.getUserAccounts(user.id);
+        if (response.success) {
+          setUserAccounts(response.data);
+        } else {
+          console.error('Failed to get user accounts:', response.message);
         }
       } catch (error) {
         console.error('Error loading user accounts:', error);
@@ -309,9 +312,9 @@ const SendMoneyScreen: React.FC = () => {
       let recipientDetails: any;
 
       try {
-        const lookupResponse = await apiClient.get(`/payments/lookup/${recipient}`);
-        if (lookupResponse.data.success) {
-          recipientDetails = lookupResponse.data.data;
+        const lookupResponse = await apiClient.lookupAccount(recipient);
+        if (lookupResponse.success) {
+          recipientDetails = lookupResponse.data;
           if (recipientDetails.accounts && recipientDetails.accounts.length > 0) {
             recipientAccountId = recipientDetails.accounts[0].id;
           } else {
@@ -327,21 +330,17 @@ const SendMoneyScreen: React.FC = () => {
         return;
       }
 
-      const transferData = {
-        senderAccountId: senderAccount.id,
-        recipientAccountId: recipientAccountId,
-        amount: parseFloat(amount),
-        currency: 'USD',
-        description: note || `Transfer to ${recipient}`
-      };
-
-      console.log('Making transfer with data:', transferData);
-
       // Make the transfer
-      const transferResponse = await apiClient.post('/payments/transfer', transferData);
+      const transferResponse = await apiClient.transferMoney(
+        senderAccount.id,
+        recipientAccountId,
+        parseFloat(amount),
+        'USD',
+        note || `Transfer to ${recipient}`
+      );
 
-      if (transferResponse.data.success) {
-        const transferData: TransferResponse = transferResponse.data.data;
+      if (transferResponse.success) {
+        const transferData: TransferResponse = transferResponse.data;
         
         Alert.alert(
           'Success! 🎉',

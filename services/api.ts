@@ -153,6 +153,12 @@ class ApiClient {
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseURL}${endpoint}`;
     
+    // Debug logging
+    console.log('🔍 API Request Debug:');
+    console.log('🔍 baseURL:', this.baseURL);
+    console.log('🔍 endpoint:', endpoint);
+    console.log('🔍 full URL:', url);
+    
     const config: RequestInit = {
       ...options,
       headers: {
